@@ -21,6 +21,9 @@ lerna-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+*.tsbuildinfo
+server/.dev-session_secret
+server/kyc_uploads/
 
 # IDE and OS files
 .idea/
