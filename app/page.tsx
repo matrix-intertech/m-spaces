@@ -81,8 +81,8 @@ export default async function HomePage({
     getCurrentUser(),
     getFollowedPartnerIds()
   ]);
-  if (String(currentUser?.role ?? "").toLowerCase() === "admin") {
-    redirect("/admin");
+  if (["admin", "support"].includes(String(currentUser?.role ?? "").toLowerCase())) {
+    redirect("/admin?tab=overview");
   }
 
   const baseFeed = mergeProperties(featured.properties, sale.properties, newlyAdded.properties);

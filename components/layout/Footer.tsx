@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import { AppearanceToggle } from "@/components/layout/AppearanceToggle";
 
 export function Footer() {
   const year = new Date().getFullYear();
@@ -16,7 +15,7 @@ export function Footer() {
                 alt="MatrixSpaces"
                 width={256}
                 height={256}
-                className="w-28 h-28 object-contain opacity-80 group-hover:opacity-100 transition-opacity"
+                className="w-28 h-auto object-contain opacity-80 group-hover:opacity-100 transition-opacity"
               />
             </Link>
             <p className="mt-1 text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
@@ -80,9 +79,6 @@ export function Footer() {
                   <path d="M7.5 2h9A5.5 5.5 0 0122 7.5v9a5.5 5.5 0 01-5.5 5.5h-9A5.5 5.5 0 012 16.5v-9A5.5 5.5 0 017.5 2zm0 1.8A3.7 3.7 0 003.8 7.5v9a3.7 3.7 0 003.7 3.7h9a3.7 3.7 0 003.7-3.7v-9a3.7 3.7 0 00-3.7-3.7h-9zm4.5 3.4a4.8 4.8 0 110 9.6 4.8 4.8 0 010-9.6zm0 1.8a3 3 0 100 6 3 3 0 000-6zm5.1-2.2a1.15 1.15 0 110 2.3 1.15 1.15 0 010-2.3z" />
                 </svg>
               </a>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-[11px] font-medium text-slate-500">
-              <AppearanceToggle />
             </div>
           </div>
         </div>

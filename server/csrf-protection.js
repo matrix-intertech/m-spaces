@@ -2,12 +2,20 @@ const crypto = require('crypto');
 
 const CSRF_COOKIE_NAME = 'XSRF-TOKEN';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const CSRF_MODE = String(process.env.CSRF_PROTECTION || '').trim().toLowerCase();
+
+function isCsrfEnabled() {
+    if (CSRF_MODE === 'off' || CSRF_MODE === 'false' || CSRF_MODE === '0') return false;
+    if (CSRF_MODE === 'on' || CSRF_MODE === 'true' || CSRF_MODE === '1') return true;
+    return process.env.NODE_ENV === 'production';
+}
 
 function createToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
 function ensureCsrfToken(req, res) {
+    if (!isCsrfEnabled()) return '';
     if (!req.session) return null;
     if (!req.session.csrfToken) {
         req.session.csrfToken = createToken();
@@ -36,6 +44,7 @@ function submittedToken(req) {
 }
 
 function validateCsrfToken(req) {
+    if (!isCsrfEnabled()) return true;
     if (!req.session) return false;
     const expected = req.session.csrfToken;
     const actual = submittedToken(req);
@@ -47,6 +56,7 @@ function validateCsrfToken(req) {
 }
 
 function requireCsrf(req, res, next) {
+    if (!isCsrfEnabled()) return next();
     if (SAFE_METHODS.has(req.method)) {
         ensureCsrfToken(req, res);
         return next();

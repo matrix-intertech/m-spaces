@@ -1,26 +1,44 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { renderDashboardPage } from "@/lib/dashboardPage";
-import { getCurrentUser } from "@/services/api";
+import { DashboardShell } from "@/components/pages/DashboardShell";
+import { RoleDashboard } from "@/components/pages/RoleDashboard";
+import { dashboardPreset } from "@/components/pages/dashboardPresets";
+import { getCurrentUser, getDashboardPayload } from "@/services/api";
+import type { User } from "@/types";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard"
 };
 
-export default async function AdminDashboardPage() {
-  const user = await getCurrentUser();
+export default async function AdminDashboardPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const payload = await getDashboardPayload("admin", resolvedSearchParams);
+  let user = (payload?.user as User | undefined) ?? null;
+
   if (!user) {
-    redirect("/login?redirect=/admin");
+    user = await getCurrentUser();
   }
-  if (String(user.role ?? "").toLowerCase() !== "admin") {
+
+  if (!user) redirect("/login?redirect=/admin?tab=overview");
+
+  const role = String(user.role ?? "").toLowerCase();
+  if (role !== "admin" && role !== "support") {
+    redirect("/");
+  }
+
+  const preset = dashboardPreset("admin", user);
+  if (!payload) {
     return (
-      <div style={{ minHeight: "70vh", display: "grid", placeItems: "center", padding: "2rem" }}>
-        <div style={{ maxWidth: 560, textAlign: "center", border: "1px solid #e5e7eb", borderRadius: 12, padding: "1.25rem", background: "#fff" }}>
-          <h1 style={{ margin: 0, fontSize: "1.6rem", fontWeight: 900, color: "#111827" }}>403 Forbidden</h1>
-          <p style={{ margin: ".75rem 0 0", color: "#4b5563", fontWeight: 600 }}>You do not have permission to access the admin dashboard.</p>
-        </div>
-      </div>
+      <DashboardShell
+        title={preset.title}
+        subtitle="This dashboard could not be loaded from the backend JSON contract."
+      />
     );
   }
-  return renderDashboardPage("admin");
+
+  return <RoleDashboard user={user} payload={payload} {...preset} />;
 }

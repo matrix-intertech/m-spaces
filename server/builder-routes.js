@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const { validatePassword, addToPasswordHistory, generateUniqueUsername } = require('./utils');
 const { emailQueue } = require('./email-queue');
 const notificationService = require('./notification-service');
-const { getUserPermissions, hasPermission } = require('./permission-utils');
+const { getUserPermissions, hasPermission, invalidateUserPermissionCache } = require('./permission-utils');
 const { salesAgentInsertFields } = require('./sales-agent-utils');
 const { normalizeTaskStatus, normalizeTransactionStatus, isManagedSalesAgent } = require('./sales-workflow-utils');
 const { authorize, loadAuthorizationSubject } = require('./services/authorization');
@@ -276,6 +276,7 @@ router.post('/add-agent', hasPermission('manage_builder_agents'), async (req, re
         const result = await pool.query('INSERT INTO users (name, username, account_number, email, password_hash, role, phone, parent_id, sales_agent_type, parent_type, is_email_verified) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE) RETURNING id', 
             [name, uniqueUsername, nextAccountNumber.toString(), email, hash, targetRole, phone, req.session.user.id, salesFields.salesAgentType, salesFields.parentType]);
         await addToPasswordHistory(result.rows[0].id, hash);
+        await invalidateUserPermissionCache(result.rows[0].id);
         if (phone) {
             const waService = require('./whatsappService');
             const loginUrl = `http://${req.headers.host}/login`;

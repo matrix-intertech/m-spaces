@@ -9,11 +9,12 @@ const QRCode = require('qrcode');
 // const multiavatar = require('@multiavatar/multiavatar'); // Removed as it's not used for avatar generation anymore
 const { validatePassword, isPasswordReused, addToPasswordHistory, generateUniqueUsername } = require('./utils');
 const validate = require('./validate');
+const { fetchWithCache } = require('./redis-cache');
+const { getUserPermissions, invalidateUserPermissionCache } = require('./permission-utils');
 const { emailQueue } = require('./email-queue');
 const notificationService = require('./notification-service');
 const { success, error } = require('./responseHandler');
 const waService = require('./whatsappService');
-const { getUserPermissions } = require('./permission-utils');
 const { getSalesAgentContext, salesAgentInsertFields } = require('./sales-agent-utils');
 const { getSalesScopeIds } = require('./sales-workflow-utils');
 const { authorize, loadAuthorizationSubject } = require('./services/authorization');
@@ -98,6 +99,22 @@ function buildPropertyStatusCounts(properties) {
     }
 
     return counts;
+}
+
+function dashboardCacheKey(scope, userId, extras = {}) {
+    const serialized = Object.keys(extras)
+        .sort()
+        .map((key) => `${key}:${Array.isArray(extras[key]) ? extras[key].join(',') : String(extras[key] ?? '')}`)
+        .join('|');
+    return `dashboard:${scope}:user:${userId}:${serialized}`;
+}
+
+async function cachedRows(scope, userId, ttlSeconds, query, params = [], extras = {}) {
+    return fetchWithCache(
+        dashboardCacheKey(scope, userId, extras),
+        ttlSeconds,
+        async () => (await pool.query(query, params)).rows
+    );
 }
 
 module.exports = function(uploadVault, upload) {
@@ -1113,117 +1130,55 @@ module.exports = function(uploadVault, upload) {
     router.get('/broker', async (req, res) => {
         if (!req.session.user || req.session.user.role !== 'broker') return res.redirect('/login');
         const permissions = await getUserPermissions(req.session.user.id);
-        const myVisits = await pool.query(`SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users u ON v.user_id = u.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE v.agent_id = $1 OR v.agent_id IN (SELECT id FROM users WHERE parent_id = $1) ORDER BY v.scheduled_at ASC`, [req.session.user.id]);
-        const assignedProps = await pool.query(`SELECT p.*, u.username as owner_name, u.phone as owner_phone, u.email as owner_email FROM properties p LEFT JOIN users u ON p.owner_id = u.id WHERE p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])) ORDER BY p.created_at DESC`, [req.session.user.id]);
+        const userId = req.session.user.id;
+        const [
+            myVisitsRows,
+            assignedPropsRows,
+            allPropertiesRows,
+            allTenantsRows,
+            activePropertiesRows,
+            visitRequestRows,
+            assignedProjectRows,
+            myLeadRows,
+            scheduleRows,
+            taskRows,
+            transactionRows,
+            agentRows,
+            myRequirementRows,
+            requirementSuggestionRows
+        ] = await Promise.all([
+            cachedRows('broker-visits', userId, 20, `SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users u ON v.user_id = u.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE v.agent_id = $1 OR v.agent_id IN (SELECT id FROM users WHERE parent_id = $1) ORDER BY v.scheduled_at ASC`, [userId]),
+            cachedRows('broker-assigned-properties', userId, 20, `SELECT p.*, u.username as owner_name, u.phone as owner_phone, u.email as owner_email FROM properties p LEFT JOIN users u ON p.owner_id = u.id WHERE p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])) ORDER BY p.created_at DESC`, [userId]),
+            cachedRows('broker-property-options', userId, 20, `SELECT DISTINCT p.id, p.title, p.locality FROM properties p WHERE p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])) ORDER BY p.title ASC`, [userId]),
+            cachedRows('broker-tenant-options', userId, 20, `SELECT DISTINCT u.id, u.username, u.email, u.phone FROM users u WHERE u.id IN ( SELECT v.user_id FROM visits v WHERE v.agent_id = $1 OR v.agent_id IN (SELECT id FROM users WHERE parent_id = $1) UNION SELECT pc.buyer_id FROM property_conversations pc JOIN properties p ON p.id = pc.property_id WHERE p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])) ) ORDER BY u.username ASC`, [userId]),
+            cachedRows('broker-active-properties', userId, 20, `SELECT p.*, u.username as owner_name, u.phone as owner_phone, u.email as owner_email FROM properties p LEFT JOIN users u ON p.owner_id = u.id WHERE p.status IN ('listed', 'reviewing', 'negotiating', 'unlisted') AND ( p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])) ) ORDER BY p.created_at DESC`, [userId]),
+            cachedRows('broker-visit-requests', userId, 20, `SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users u ON v.user_id = u.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE (p.owner_id = $1 OR p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[]))) ORDER BY v.created_at DESC`, [userId]),
+            cachedRows('broker-projects', userId, 30, `SELECT p.*, u.agency_name as builder_name FROM projects p JOIN project_brokers pb ON p.id = pb.project_id JOIN users u ON p.builder_id = u.id WHERE pb.broker_id = $1 ORDER BY p.created_at DESC`, [userId]),
+            cachedRows('broker-leads', userId, 20, `SELECT l.*, u.username as assigned_agent_name FROM leads l LEFT JOIN users u ON l.agent_id = u.id WHERE l.agent_id = $1 OR l.agent_id IN (SELECT id FROM users WHERE parent_id = $1) ORDER BY l.created_at DESC`, [userId]),
+            cachedRows('broker-schedules', userId, 20, `SELECT s.*, l.name as lead_name, l.email as lead_email FROM agent_schedules s LEFT JOIN leads l ON s.reference_id = l.id WHERE s.agent_id = $1 ORDER BY s.scheduled_at ASC`, [userId]),
+            cachedRows('broker-tasks', userId, 20, `SELECT t.*, assignee.username as assignee_name, creator.username as creator_name, p.title as property_title, l.name as lead_name FROM agent_tasks t LEFT JOIN users assignee ON t.assigned_to = assignee.id LEFT JOIN users creator ON t.created_by = creator.id LEFT JOIN properties p ON t.related_property_id = p.id LEFT JOIN leads l ON t.related_lead_id = l.id WHERE t.created_by = $1 OR t.assigned_to = $1 OR t.assigned_to IN (SELECT id FROM users WHERE parent_id = $1 AND role = 'external_sales') ORDER BY t.created_at DESC`, [userId]),
+            cachedRows('broker-transactions', userId, 20, `SELECT st.*, p.title as property_title FROM sales_transactions st LEFT JOIN properties p ON st.property_id = p.id WHERE st.agent_id = $1 OR st.agent_id IN (SELECT id FROM users WHERE parent_id = $1) ORDER BY st.created_at DESC`, [userId]),
+            cachedRows('broker-agents', userId, 30, `SELECT id, username, email, role, phone, avatar_url, COALESCE(permissions, '{}'::jsonb) as permissions FROM users WHERE parent_id = $1 AND role = 'external_sales' AND COALESCE(sales_agent_type, 'associated') = 'associated' ORDER BY username ASC`, [userId]),
+            cachedRows('broker-requirements', userId, 20, `SELECT * FROM corporate_requirements WHERE corporate_id = $1 ORDER BY created_at DESC`, [userId]),
+            cachedRows('broker-requirement-suggestions', userId, 20, `SELECT rs.*, p.title as property_title, p.locality, p.final_price, p.type, p.photos, cr.cities as req_cities, cr.property_type as req_type FROM requirement_suggestions rs JOIN properties p ON rs.property_id = p.id JOIN corporate_requirements cr ON rs.requirement_id = cr.id WHERE cr.corporate_id = $1 AND rs.status = 'approved' ORDER BY rs.created_at DESC`, [userId]).catch(() => [])
+        ]);
+        const myVisits = { rows: myVisitsRows };
+        const assignedProps = { rows: assignedPropsRows };
         const brokerPropertyGroups = classifyDashboardProperties(assignedProps.rows, req.session.user.id);
         const brokerMyPropertyCounts = buildPropertyStatusCounts(brokerPropertyGroups.myProperties);
         const brokerManagedPropertyCounts = buildPropertyStatusCounts(brokerPropertyGroups.managedProperties);
-
-        // New data fetches for visit creation and agent management
-        const allProperties = await pool.query(`
-            SELECT DISTINCT p.id, p.title, p.locality
-            FROM properties p
-            WHERE p.assigned_broker_id = $1
-               OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[]))
-            ORDER BY p.title ASC
-        `, [req.session.user.id]);
-        const allTenants = await pool.query(`
-            SELECT DISTINCT u.id, u.username, u.email, u.phone
-            FROM users u
-            WHERE u.id IN (
-                SELECT v.user_id
-                FROM visits v
-                WHERE v.agent_id = $1
-                   OR v.agent_id IN (SELECT id FROM users WHERE parent_id = $1)
-                UNION
-                SELECT pc.buyer_id
-                FROM property_conversations pc
-                JOIN properties p ON p.id = pc.property_id
-                WHERE p.assigned_broker_id = $1
-                   OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[]))
-            )
-            ORDER BY u.username ASC
-        `, [req.session.user.id]);
-        
-        const activeProperties = await pool.query(`
-            SELECT p.*, u.username as owner_name, u.phone as owner_phone, u.email as owner_email 
-            FROM properties p 
-            LEFT JOIN users u ON p.owner_id = u.id 
-            WHERE p.status IN ('listed', 'reviewing', 'negotiating', 'unlisted')
-              AND (
-                    p.assigned_broker_id = $1
-                    OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[]))
-                  )
-            ORDER BY p.created_at DESC
-        `, [req.session.user.id]);
-
-            const visitRequestsRes = await pool.query(`
-                SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone,
-                       a.username as agent_name, parent.username as parent_name
-                FROM visits v 
-                JOIN properties p ON v.property_id = p.id 
-                JOIN users u ON v.user_id = u.id 
-                LEFT JOIN users a ON v.agent_id = a.id
-                LEFT JOIN users parent ON a.parent_id = parent.id
-                WHERE (p.owner_id = $1 OR p.assigned_broker_id = $1 OR $1 = ANY(COALESCE(p.assigned_brokers, '{}'::int[])))
-                ORDER BY v.created_at DESC
-            `, [req.session.user.id]);
-
-        // Fetch projects assigned to this broker via project_brokers table
-        const assignedProjects = await pool.query(`
-            SELECT p.*, u.agency_name as builder_name 
-            FROM projects p
-            JOIN project_brokers pb ON p.id = pb.project_id
-            JOIN users u ON p.builder_id = u.id
-            WHERE pb.broker_id = $1
-            ORDER BY p.created_at DESC
-        `, [req.session.user.id]);
-
-        const myLeads = await pool.query('SELECT l.*, u.username as assigned_agent_name FROM leads l LEFT JOIN users u ON l.agent_id = u.id WHERE l.agent_id = $1 OR l.agent_id IN (SELECT id FROM users WHERE parent_id = $1) ORDER BY l.created_at DESC', [req.session.user.id]);
-        const schedulesRes = await pool.query(`
-            SELECT s.*, l.name as lead_name, l.email as lead_email 
-            FROM agent_schedules s 
-            LEFT JOIN leads l ON s.reference_id = l.id 
-            WHERE s.agent_id = $1 
-            ORDER BY s.scheduled_at ASC
-        `, [req.session.user.id]);
-        const tasksRes = await pool.query(`
-            SELECT t.*, assignee.username as assignee_name, creator.username as creator_name, p.title as property_title, l.name as lead_name
-            FROM agent_tasks t
-            LEFT JOIN users assignee ON t.assigned_to = assignee.id
-            LEFT JOIN users creator ON t.created_by = creator.id
-            LEFT JOIN properties p ON t.related_property_id = p.id
-            LEFT JOIN leads l ON t.related_lead_id = l.id
-            WHERE t.created_by = $1
-               OR t.assigned_to = $1
-               OR t.assigned_to IN (SELECT id FROM users WHERE parent_id = $1 AND role = 'external_sales')
-            ORDER BY t.created_at DESC
-        `, [req.session.user.id]);
-        const transactionsRes = await pool.query(`
-            SELECT st.*, p.title as property_title
-            FROM sales_transactions st
-            LEFT JOIN properties p ON st.property_id = p.id
-            WHERE st.agent_id = $1 OR st.agent_id IN (SELECT id FROM users WHERE parent_id = $1)
-            ORDER BY st.created_at DESC
-        `, [req.session.user.id]);
-
-        let agentsUnderBuilder = [];
-        // Brokers can see Sales Agents they have added directly AND those onboarded through direct signup
-        const agentsRes = await pool.query(`SELECT id, username, email, role, phone, avatar_url, COALESCE(permissions, '{}'::jsonb) as permissions FROM users WHERE parent_id = $1 AND role = 'external_sales' AND COALESCE(sales_agent_type, 'associated') = 'associated' ORDER BY username ASC`, [req.session.user.id]);
-        agentsUnderBuilder = [{ id: req.session.user.id, username: 'Myself', email: req.session.user.email, role: req.session.user.role, phone: req.session.user.phone, avatar_url: req.session.user.avatar_url }, ...agentsRes.rows];
-
-        const myReqsRes = await pool.query("SELECT * FROM corporate_requirements WHERE corporate_id = $1 ORDER BY created_at DESC", [req.session.user.id]);
-        let mySuggRes = { rows: [] };
-        try {
-            mySuggRes = await pool.query(`
-                SELECT rs.*, p.title as property_title, p.locality, p.final_price, p.type, p.photos, cr.cities as req_cities, cr.property_type as req_type
-                FROM requirement_suggestions rs
-                JOIN properties p ON rs.property_id = p.id
-                JOIN corporate_requirements cr ON rs.requirement_id = cr.id
-                WHERE cr.corporate_id = $1 AND rs.status = 'approved'
-                ORDER BY rs.created_at DESC
-            `, [req.session.user.id]);
-        } catch(e) {}
+        const allProperties = { rows: allPropertiesRows };
+        const allTenants = { rows: allTenantsRows };
+        const activeProperties = { rows: activePropertiesRows };
+        const visitRequestsRes = { rows: visitRequestRows };
+        const assignedProjects = { rows: assignedProjectRows };
+        const myLeads = { rows: myLeadRows };
+        const schedulesRes = { rows: scheduleRows };
+        const tasksRes = { rows: taskRows };
+        const transactionsRes = { rows: transactionRows };
+        const agentsUnderBuilder = [{ id: req.session.user.id, username: 'Myself', email: req.session.user.email, role: req.session.user.role, phone: req.session.user.phone, avatar_url: req.session.user.avatar_url }, ...agentRows];
+        const myReqsRes = { rows: myRequirementRows };
+        const mySuggRes = { rows: requirementSuggestionRows };
 
         if (req.headers.accept && req.headers.accept.includes('application/json')) {
             return res.json({
@@ -1306,6 +1261,7 @@ module.exports = function(uploadVault, upload) {
                 [name, uniqueUsername, nextAccountNumber.toString(), email, hash, targetRole, phone, req.session.user.id, salesFields.salesAgentType, salesFields.parentType]
             );
             await addToPasswordHistory(result.rows[0].id, hash);
+            await invalidateUserPermissionCache(result.rows[0].id);
             if (phone) {
                 const loginUrl = `http://${req.headers.host}/login`;
                 waService.sendAccountCredentials(phone, name, uniqueUsername, email, password, loginUrl).catch(e => console.error("WA Error:", e));
@@ -1373,6 +1329,7 @@ module.exports = function(uploadVault, upload) {
                     );
 
                     await client.query('COMMIT');
+                    await invalidateUserPermissionCache(target_user_id);
                 } catch (error) {
                     await client.query('ROLLBACK');
                     throw error;
@@ -1402,99 +1359,54 @@ module.exports = function(uploadVault, upload) {
         req.session.user.sales_agent_type = salesContext.salesAgentType;
         req.session.user.parent_type = salesContext.parentType;
         req.session.user.parent_id = salesContext.parentId || req.session.user.parent_id || null;
-
-        const myVisits = await pool.query(`SELECT v.*, p.title as property_title, p.locality, p.latitude, p.longitude, p.photos, renter.username as renter_name, renter.phone as renter_phone, renter.email as renter_email, renter.saved_filters, owner.username as owner_name, owner.phone as owner_phone, owner.email as owner_email, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users renter ON v.user_id = renter.id LEFT JOIN users owner ON p.owner_id = owner.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE v.agent_id = $1 ORDER BY v.scheduled_at ASC`, [req.session.user.id]);
-        const myLeads = await pool.query('SELECT l.*, u.username as assigned_agent_name FROM leads l LEFT JOIN users u ON l.agent_id = u.id WHERE l.agent_id = $1 ORDER BY l.created_at DESC', [req.session.user.id]);
-        const propertiesList = await pool.query(`
-            SELECT p.id, p.owner_id, p.assigned_broker_id, p.assigned_brokers, p.ownership_type, p.title, p.locality, p.final_price, p.status, p.type, p.listing_type, p.photos, p.size, p.condition, p.listed_at, p.is_matrix_verified, u.username as owner_name, u.phone as owner_phone, u.email as owner_email
-            FROM properties p
-            LEFT JOIN users u ON p.owner_id = u.id
-            WHERE p.owner_id = ANY($1::int[])
-               OR p.assigned_broker_id = ANY($1::int[])
-               OR COALESCE(p.assigned_brokers, '{}'::int[]) && $1::int[]
-            ORDER BY p.id DESC
-            LIMIT 100
-        `, [managerIds]);
+        const userId = req.session.user.id;
+        const [
+            myVisitRows,
+            myLeadRows,
+            propertyRows,
+            corpClientRows,
+            corpReqRows,
+            scheduleRows,
+            visitRequestRows,
+            assignedProjectRows,
+            taskRows,
+            transactionRows,
+            managementRequestRows,
+            myRequirementRows,
+            requirementSuggestionRows
+        ] = await Promise.all([
+            cachedRows('sales-visits', userId, 20, `SELECT v.*, p.title as property_title, p.locality, p.latitude, p.longitude, p.photos, renter.username as renter_name, renter.phone as renter_phone, renter.email as renter_email, renter.saved_filters, owner.username as owner_name, owner.phone as owner_phone, owner.email as owner_email, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users renter ON v.user_id = renter.id LEFT JOIN users owner ON p.owner_id = owner.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE v.agent_id = $1 ORDER BY v.scheduled_at ASC`, [userId]),
+            cachedRows('sales-leads', userId, 20, `SELECT l.*, u.username as assigned_agent_name FROM leads l LEFT JOIN users u ON l.agent_id = u.id WHERE l.agent_id = $1 ORDER BY l.created_at DESC`, [userId]),
+            cachedRows('sales-properties', userId, 20, `SELECT p.id, p.owner_id, p.assigned_broker_id, p.assigned_brokers, p.ownership_type, p.title, p.locality, p.final_price, p.status, p.type, p.listing_type, p.photos, p.size, p.condition, p.listed_at, p.is_matrix_verified, u.username as owner_name, u.phone as owner_phone, u.email as owner_email FROM properties p LEFT JOIN users u ON p.owner_id = u.id WHERE p.owner_id = ANY($1::int[]) OR p.assigned_broker_id = ANY($1::int[]) OR COALESCE(p.assigned_brokers, '{}'::int[]) && $1::int[] ORDER BY p.id DESC LIMIT 100`, [managerIds], { managerIds }),
+            cachedRows('sales-corporate-clients', userId, 20, `SELECT id, username, agency_name, email, phone, company_logo, avatar_url FROM users WHERE role = 'corporate' AND rm_id = $1`, [userId]),
+            cachedRows('sales-corporate-reqs', userId, 20, `SELECT cr.*, u.agency_name, u.username as corp_name FROM corporate_requirements cr JOIN users u ON cr.corporate_id = u.id WHERE u.rm_id = $1 ORDER BY cr.created_at DESC`, [userId]),
+            cachedRows('sales-schedules', userId, 20, `SELECT s.*, l.name as lead_name, l.email as lead_email FROM agent_schedules s LEFT JOIN leads l ON s.reference_id = l.id WHERE s.agent_id = $1 ORDER BY s.scheduled_at ASC`, [userId]),
+            cachedRows('sales-visit-requests', userId, 20, `SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone, a.username as agent_name, parent.username as parent_name FROM visits v JOIN properties p ON v.property_id = p.id JOIN users u ON v.user_id = u.id LEFT JOIN users a ON v.agent_id = a.id LEFT JOIN users parent ON a.parent_id = parent.id WHERE (p.owner_id = ANY($1::int[]) OR p.assigned_broker_id = ANY($1::int[]) OR COALESCE(p.assigned_brokers, '{}'::int[]) && $1::int[]) ORDER BY v.created_at DESC`, [managerIds], { managerIds }),
+            cachedRows('sales-projects', userId, 30, `SELECT DISTINCT p.*, u.agency_name as builder_name FROM projects p LEFT JOIN project_brokers pb ON p.id = pb.project_id JOIN users u ON p.builder_id = u.id WHERE p.builder_id = ANY($1::int[]) OR pb.broker_id = ANY($1::int[]) ORDER BY p.created_at DESC`, [managerIds], { managerIds }),
+            cachedRows('sales-tasks', userId, 20, `SELECT t.*, assignee.username as assignee_name, creator.username as creator_name, p.title as property_title, l.name as lead_name FROM agent_tasks t LEFT JOIN users assignee ON t.assigned_to = assignee.id LEFT JOIN users creator ON t.created_by = creator.id LEFT JOIN properties p ON t.related_property_id = p.id LEFT JOIN leads l ON t.related_lead_id = l.id WHERE t.assigned_to = ANY($1::int[]) OR t.created_by = ANY($1::int[]) ORDER BY t.created_at DESC`, [salesScopeIds], { salesScopeIds }),
+            cachedRows('sales-transactions', userId, 20, `SELECT st.*, p.title as property_title FROM sales_transactions st LEFT JOIN properties p ON st.property_id = p.id WHERE st.agent_id = ANY($1::int[]) ORDER BY st.created_at DESC`, [salesScopeIds], { salesScopeIds }),
+            salesContext.salesAgentType === 'independent'
+                ? cachedRows('sales-management-requests', userId, 20, `SELECT pmr.*, p.title AS property_title, p.locality, p.final_price, owner.username AS owner_name FROM property_management_requests pmr JOIN properties p ON p.id = pmr.property_id JOIN users owner ON owner.id = pmr.owner_id WHERE pmr.agent_id = $1 ORDER BY pmr.created_at DESC`, [userId])
+                : Promise.resolve([]),
+            cachedRows('sales-my-requirements', userId, 20, `SELECT * FROM corporate_requirements WHERE corporate_id = $1 ORDER BY created_at DESC`, [userId]),
+            cachedRows('sales-requirement-suggestions', userId, 20, `SELECT rs.*, p.title as property_title, p.locality, p.final_price, p.type, p.photos, cr.cities as req_cities, cr.property_type as req_type FROM requirement_suggestions rs JOIN properties p ON rs.property_id = p.id JOIN corporate_requirements cr ON rs.requirement_id = cr.id WHERE cr.corporate_id = $1 AND rs.status = 'approved' ORDER BY rs.created_at DESC`, [userId]).catch(() => [])
+        ]);
+        const myVisits = { rows: myVisitRows };
+        const myLeads = { rows: myLeadRows };
+        const propertiesList = { rows: propertyRows };
         const salesPropertyGroups = classifyDashboardProperties(propertiesList.rows, req.session.user.id);
         const salesMyPropertyCounts = buildPropertyStatusCounts(salesPropertyGroups.myProperties);
         const salesManagedPropertyCounts = buildPropertyStatusCounts(salesPropertyGroups.managedProperties);
-        const corpClientsRes = await pool.query(`SELECT id, username, agency_name, email, phone, company_logo, avatar_url FROM users WHERE role = 'corporate' AND rm_id = $1`, [req.session.user.id]);
-        const corpReqsRes = await pool.query(`SELECT cr.*, u.agency_name, u.username as corp_name FROM corporate_requirements cr JOIN users u ON cr.corporate_id = u.id WHERE u.rm_id = $1 ORDER BY cr.created_at DESC`, [req.session.user.id]);
-        const schedulesRes = await pool.query(`
-            SELECT s.*, l.name as lead_name, l.email as lead_email 
-            FROM agent_schedules s 
-            LEFT JOIN leads l ON s.reference_id = l.id 
-            WHERE s.agent_id = $1 
-            ORDER BY s.scheduled_at ASC
-        `, [req.session.user.id]);
-
-        const visitRequestsRes = await pool.query(`
-            SELECT v.*, p.title as property_title, p.locality, p.photos, u.username as renter_name, u.phone as renter_phone,
-                   a.username as agent_name, parent.username as parent_name
-            FROM visits v 
-            JOIN properties p ON v.property_id = p.id 
-            JOIN users u ON v.user_id = u.id 
-            LEFT JOIN users a ON v.agent_id = a.id
-            LEFT JOIN users parent ON a.parent_id = parent.id
-            WHERE (p.owner_id = ANY($1::int[])
-                OR p.assigned_broker_id = ANY($1::int[])
-                OR COALESCE(p.assigned_brokers, '{}'::int[]) && $1::int[])
-            ORDER BY v.created_at DESC
-        `, [managerIds]);
-
-        const assignedProjectsRes = await pool.query(`
-            SELECT DISTINCT p.*, u.agency_name as builder_name
-            FROM projects p
-            LEFT JOIN project_brokers pb ON p.id = pb.project_id
-            JOIN users u ON p.builder_id = u.id
-            WHERE p.builder_id = ANY($1::int[])
-               OR pb.broker_id = ANY($1::int[])
-            ORDER BY p.created_at DESC
-        `, [managerIds]);
-
-        const tasksRes = await pool.query(`
-            SELECT t.*, assignee.username as assignee_name, creator.username as creator_name, p.title as property_title, l.name as lead_name
-            FROM agent_tasks t
-            LEFT JOIN users assignee ON t.assigned_to = assignee.id
-            LEFT JOIN users creator ON t.created_by = creator.id
-            LEFT JOIN properties p ON t.related_property_id = p.id
-            LEFT JOIN leads l ON t.related_lead_id = l.id
-            WHERE t.assigned_to = ANY($1::int[])
-               OR t.created_by = ANY($1::int[])
-            ORDER BY t.created_at DESC
-        `, [salesScopeIds]);
-
-        const transactionsRes = await pool.query(`
-            SELECT st.*, p.title as property_title
-            FROM sales_transactions st
-            LEFT JOIN properties p ON st.property_id = p.id
-            WHERE st.agent_id = ANY($1::int[])
-            ORDER BY st.created_at DESC
-        `, [salesScopeIds]);
-
-        const managementRequestsRes = salesContext.salesAgentType === 'independent'
-            ? await pool.query(`
-                SELECT pmr.*, p.title AS property_title, p.locality, p.final_price, owner.username AS owner_name
-                FROM property_management_requests pmr
-                JOIN properties p ON p.id = pmr.property_id
-                JOIN users owner ON owner.id = pmr.owner_id
-                WHERE pmr.agent_id = $1
-                ORDER BY pmr.created_at DESC
-            `, [req.session.user.id])
-            : { rows: [] };
-
-        const myReqsRes = await pool.query("SELECT * FROM corporate_requirements WHERE corporate_id = $1 ORDER BY created_at DESC", [req.session.user.id]);
-        let mySuggRes = { rows: [] };
-        try {
-            mySuggRes = await pool.query(`
-                SELECT rs.*, p.title as property_title, p.locality, p.final_price, p.type, p.photos, cr.cities as req_cities, cr.property_type as req_type
-                FROM requirement_suggestions rs
-                JOIN properties p ON rs.property_id = p.id
-                JOIN corporate_requirements cr ON rs.requirement_id = cr.id
-                WHERE cr.corporate_id = $1 AND rs.status = 'approved'
-                ORDER BY rs.created_at DESC
-            `, [req.session.user.id]);
-        } catch(e) {}
+        const corpClientsRes = { rows: corpClientRows };
+        const corpReqsRes = { rows: corpReqRows };
+        const schedulesRes = { rows: scheduleRows };
+        const visitRequestsRes = { rows: visitRequestRows };
+        const assignedProjectsRes = { rows: assignedProjectRows };
+        const tasksRes = { rows: taskRows };
+        const transactionsRes = { rows: transactionRows };
+        const managementRequestsRes = { rows: managementRequestRows };
+        const myReqsRes = { rows: myRequirementRows };
+        const mySuggRes = { rows: requirementSuggestionRows };
 
         if (req.headers.accept && req.headers.accept.includes('application/json')) {
             return res.json({

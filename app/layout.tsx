@@ -38,7 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const hidePublicChrome = role === "admin" || role === "support";
 
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth" data-theme="light">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

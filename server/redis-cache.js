@@ -72,4 +72,9 @@ const invalidateCache = async (key) => {
     }
 };
 
-module.exports = { redisClient, fetchWithCache, invalidateCache };
+module.exports = {
+    redisClient,
+    fetchWithCache,
+    invalidateCache,
+    hasRedisConfig: hasRedis
+};

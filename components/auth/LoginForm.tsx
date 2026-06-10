@@ -51,6 +51,10 @@ function normalizeRedirect(url: string) {
   }
 }
 
+function navigateAfterAuth(url: string) {
+  window.location.assign(url || "/");
+}
+
 async function postAuth(path: string, body: Record<string, unknown>): Promise<{ payload: AuthPayload; redirectedTo?: string }> {
   const csrfToken = await getClientCsrfToken();
   const response = await fetch(`${backendBaseUrl}${path}`, {
@@ -127,8 +131,7 @@ export function LoginForm() {
         remember: formData.get("remember") === "on"
       });
       if (payload.requires2FA) router.push("/login/2fa");
-      else router.push(redirectedTo || payload.redirect || "/");
-      router.refresh();
+      else navigateAfterAuth(redirectedTo || payload.redirect || "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -164,8 +167,7 @@ export function LoginForm() {
     setLoading(true);
     try {
       const { payload } = await postAuth("/login/otp", { email: emailInput, otp: emailOtp, referral_code: refCode });
-      router.push(payload.redirect || "/");
-      router.refresh();
+      navigateAfterAuth(payload.redirect || "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid OTP");
     } finally {
@@ -211,8 +213,7 @@ export function LoginForm() {
         setAccountTypes(payload.accountTypes ?? []);
         setError("Please select the account type for this phone number.");
       } else {
-        router.push(payload.redirect || "/");
-        router.refresh();
+        navigateAfterAuth(payload.redirect || "/");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid WhatsApp OTP");

@@ -1,8 +1,8 @@
 const path = require('path');
 const { createRequire } = require('module');
 const crypto = require('crypto');
-require('dotenv').config({ path: path.join(__dirname, '.env') }); // Try backend folder first
-require('dotenv').config({ path: path.join(__dirname, '../.env') }); // Fallback to root folder
+const { loadEnv } = require('./load-env');
+loadEnv();
 
 // Normalize AWS env variables to strip hidden Windows \r characters and quotes
 if (process.env.AWS_S3_BUCKET_NAME) process.env.AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME.replace(/[^a-zA-Z0-9-.]/g, '');
@@ -52,7 +52,9 @@ const compression = require('compression');
 const morgan = require('morgan');
 
 const { emailWorker } = require('./email-queue');
-const { redisClient } = require('./redis-cache');
+const { redisClient, hasRedisConfig } = require('./redis-cache');
+const RedisSessionStore = require('./redis-session-store');
+const ensurePerformanceIndexes = require('./ensure-performance-indexes');
 
 const cors = require('cors');
 const app = express();
@@ -262,6 +264,20 @@ app.set('views', LEGACY_VIEWS_PATH);
 app.engine('ejs', require('ejs').__express);
 app.set('view engine', 'ejs');
 
+// Support the same backend prefix locally and on Vercel.
+app.use((req, res, next) => {
+    const backendPrefix = '/svc/server';
+    const currentUrl = String(req.url || '');
+
+    if (currentUrl === backendPrefix || currentUrl.startsWith(`${backendPrefix}/`)) {
+        const rewrittenUrl = currentUrl.slice(backendPrefix.length) || '/';
+        req.url = rewrittenUrl;
+        req.originalUrl = rewrittenUrl;
+    }
+
+    next();
+});
+
 // Ensure Express recognizes HTTPS even if Nginx is missing the X-Forwarded-Proto header
 app.use((req, res, next) => {
     if (process.env.AUTH0_BASE_URL && process.env.AUTH0_BASE_URL.startsWith('https')) {
@@ -404,11 +420,24 @@ const auth0Config = hasAuth0RuntimeConfig ? {
     }
 } : null;
 
+const requestedSessionStore = String(process.env.SESSION_STORE || '').trim().toLowerCase();
+const wantsRedisSessionStore = requestedSessionStore === 'redis';
+const usePostgresSessionStore = !wantsRedisSessionStore && (process.env.NODE_ENV === 'production' || requestedSessionStore === 'postgres');
+const sessionStore = wantsRedisSessionStore
+    ? new RedisSessionStore({
+        client: redisClient,
+        prefix: 'sess:',
+        ttlSeconds: 60 * 60 * 24 * 30
+    })
+    : usePostgresSessionStore
+        ? new pgSession({
+            pool: pool,
+            tableName: 'session'
+        })
+        : new session.MemoryStore();
+
 const sessionMiddleware = session({
-    store: new pgSession({
-        pool: pool,
-        tableName: 'session'
-    }),
+    store: sessionStore,
     secret: createRequiredSecret('SESSION_SECRET'),
     resave: false,
     saveUninitialized: false, // Best practice: don't save uninitialized sessions
@@ -421,6 +450,13 @@ const sessionMiddleware = session({
     }
 });
 app.use(sessionMiddleware);
+if (wantsRedisSessionStore) {
+    console.warn('Using Redis session store.');
+} else if (hasRedisConfig) {
+    console.warn('Redis cache configured, but session store remains unchanged because SESSION_STORE is not set to redis.');
+} else if (!usePostgresSessionStore) {
+    console.warn('Using in-memory session store for local development.');
+}
 if (auth0Config) {
     try {
         const { auth } = require('express-openid-connect');
@@ -475,6 +511,7 @@ function shouldProxyToNext(req) {
 
     const excludedPrefixes = [
         '/api/',
+        '/admin/',
         '/auth0/login',
         '/auth0/sync',
         '/auth0/callback-sync',
@@ -493,6 +530,7 @@ function shouldProxyToNext(req) {
     ];
     const excludedExact = new Set([
         '/api',
+        '/admin',
         '/chat',
         '/socket.io',
         '/favicon.ico',
@@ -679,8 +717,13 @@ app.use(async (req, res, next) => {
     res.locals.notifications = [];
     res.locals.chatUnreadCount = 0;
     res.locals.totalUnreadCount = 0;
+    const wantsJson = req.xhr || (req.headers.accept && req.headers.accept.includes('application/json'));
+    const isApiRequest = req.path === '/api/user' || req.path === '/api/csrf-token' || req.path.startsWith('/api/') || wantsJson;
     if (req.session.user) {
         try {
+            if (isApiRequest) {
+                return next();
+            }
             const notifs = await pool.query(
                 'SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10',
                 [req.session.user.id]
@@ -749,6 +792,7 @@ const storage = multer.diskStorage({
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 
+const hasS3UploadConfig = Boolean(process.env.AWS_S3_BUCKET_NAME && process.env.AWS_REGION);
 const s3Config = { region: process.env.AWS_REGION };
 if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
     s3Config.credentials = {
@@ -760,7 +804,7 @@ const s3Client = new S3Client(s3Config);
 
 // Ensure root folders explicitly exist in the AWS S3 Console
 const initS3Folders = async () => {
-    if (!process.env.AWS_S3_BUCKET_NAME) return;
+    if (!hasS3UploadConfig) return;
     const folders = ['properties/', 'logos/', 'vault/', 'kyc/'];
     for (const folder of folders) {
         try { await s3Client.send(new PutObjectCommand({ Bucket: process.env.AWS_S3_BUCKET_NAME, Key: folder, Body: Buffer.from('') })); } 
@@ -769,7 +813,16 @@ const initS3Folders = async () => {
 };
 initS3Folders();
 
-const s3PropertyStorage = multerS3({
+const localPropertyStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, path.join(FRONTEND_PATH, 'public/uploads/'));
+    },
+    filename: (req, file, cb) => {
+        const folder = file.fieldname === 'company_logo' ? 'logos' : 'properties';
+        cb(null, `${folder}-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
+    }
+});
+const s3PropertyStorage = hasS3UploadConfig ? multerS3({
     s3: s3Client,
     bucket: process.env.AWS_S3_BUCKET_NAME,
     contentType: multerS3.AUTO_CONTENT_TYPE,
@@ -777,11 +830,20 @@ const s3PropertyStorage = multerS3({
         const folder = file.fieldname === 'company_logo' ? 'logos' : 'properties';
         cb(null, `${folder}/${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
     }
-});
+}) : localPropertyStorage;
 const upload = multer({ storage: s3PropertyStorage, fileFilter: imageFilter, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB limit
 
 // KYC File Upload (Secure storage)
-const kycStorage = multerS3({
+const localKycStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, localKycDir);
+    },
+    filename: (req, file, cb) => {
+        const userId = (req.session && req.session.user) ? req.session.user.id : 'anonymous';
+        cb(null, `${userId}-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
+    }
+});
+const kycStorage = hasS3UploadConfig ? multerS3({
     s3: s3Client,
     bucket: process.env.AWS_S3_BUCKET_NAME,
     contentType: multerS3.AUTO_CONTENT_TYPE,
@@ -789,11 +851,20 @@ const kycStorage = multerS3({
         const userId = (req.session && req.session.user) ? req.session.user.id : 'anonymous';
         cb(null, `kyc/${userId}/${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
     }
-});
+}) : localKycStorage;
 const uploadKyc = multer({ storage: kycStorage, fileFilter: docFilter, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB limit
 
 // Vault File Upload (User's personal secure documents)
-const vaultS3Storage = multerS3({
+const localVaultStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, localVaultDir);
+    },
+    filename: (req, file, cb) => {
+        const userId = (req.session && req.session.user) ? req.session.user.id : 'anonymous';
+        cb(null, `${userId}-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
+    }
+});
+const vaultS3Storage = hasS3UploadConfig ? multerS3({
     s3: s3Client,
     bucket: process.env.AWS_S3_BUCKET_NAME,
     contentType: multerS3.AUTO_CONTENT_TYPE,
@@ -801,7 +872,7 @@ const vaultS3Storage = multerS3({
         const userId = (req.session && req.session.user) ? req.session.user.id : 'anonymous';
         cb(null, `vault/${userId}/${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.]/g, '-')}`);
     }
-});
+}) : localVaultStorage;
 const uploadVault = multer({ storage: vaultS3Storage, fileFilter: docFilter, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB limit
 
 // Rate Limiters
@@ -1218,6 +1289,9 @@ app.use((err, req, res, next) => {
 
 // --- Start the server ---
 const PORT = process.env.PORT || 3000;
+ensurePerformanceIndexes().catch((error) => {
+    console.warn('[DB] Performance index bootstrap warning:', error.message);
+});
 if (process.env.NODE_ENV !== 'test' && !isVercelRuntime && !isEmbeddedBackend) {
     server.listen(PORT, '0.0.0.0', () => {
         console.log(`Running on ${PORT}`);

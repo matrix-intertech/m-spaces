@@ -237,12 +237,25 @@ export async function getOwnerDashboard(): Promise<OwnerDashboardProps | null> {
 }
 
 export async function getDashboardPayload(
-  route: "admin" | "builder" | "broker" | "sales" | "external-sales" | "corporate" | "profile" | "edit-profile" | "complete-profile"
+  route: "admin" | "builder" | "broker" | "sales" | "external-sales" | "corporate" | "profile" | "edit-profile" | "complete-profile",
+  queryParams?: Record<string, string | string[] | undefined>
 ): Promise<DashboardPayload | null> {
   try {
     if (!(await hasSessionCookie())) return null;
     const normalizedRoute = route === "external-sales" ? "sales" : route;
-    return await backendFetch<DashboardPayload>(`/${normalizedRoute}`);
+    const searchParams = new URLSearchParams();
+    if (queryParams) {
+      Object.entries(queryParams).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          value.forEach((entry) => {
+            if (entry) searchParams.append(key, entry);
+          });
+          return;
+        }
+        if (value) searchParams.set(key, value);
+      });
+    }
+    return await backendFetch<DashboardPayload>(`/${normalizedRoute}`, { searchParams });
   } catch {
     return null;
   }

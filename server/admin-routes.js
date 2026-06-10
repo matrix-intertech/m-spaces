@@ -7,10 +7,10 @@ const pool = require('./db');
 const BotService = require('./bot-service');
 const notificationService = require('./notification-service');
 const { validatePassword, addToPasswordHistory, generateUniqueUsername } = require('./utils');
-const { invalidateCache } = require('./redis-cache');
+const { fetchWithCache, invalidateCache } = require('./redis-cache');
 const { emailQueue } = require('./email-queue');
 const waService = require('./whatsappService');
-const { getUserPermissions } = require('./permission-utils');
+const { getUserPermissions, invalidateUserPermissionCache, invalidateRolePermissionCache } = require('./permission-utils');
 const adminPolicy = require('./policies/admin-policy');
 const adminReferralController = require('./controllers/admin-referral-controller');
 const validate = require('./validate');
@@ -53,6 +53,24 @@ const normalizeSubmittedCoordinates = (lat, lng, latitude, longitude) => (
     normalizeIndiaCoordinates(latitude, longitude)
 );
 
+function stableCachePart(value) {
+    if (Array.isArray(value)) return value.map((entry) => stableCachePart(entry)).join(',');
+    if (value === undefined || value === null || value === '') return 'na';
+    return String(value);
+}
+
+function adminCacheKey(scope, role, extras = {}) {
+    const serialized = Object.keys(extras)
+        .sort()
+        .map((key) => `${key}:${stableCachePart(extras[key])}`)
+        .join('|');
+    return `admin:${scope}:${String(role || '').toLowerCase()}:${serialized}`;
+}
+
+async function cachedRows(cacheKey, ttlSeconds, query, params = []) {
+    return fetchWithCache(cacheKey, ttlSeconds, async () => (await pool.query(query, params)).rows);
+}
+
 module.exports = function(upload, transporter) {
     const router = express.Router();
 
@@ -85,6 +103,19 @@ module.exports = function(upload, transporter) {
         }
         
         const { search, sort, ajax_active_listings, page, users_page, visits_page } = req.query;
+        const activeTab = String(req.query.tab || 'overview');
+        const isOverviewTab = activeTab === 'overview';
+        const needsActiveListings = Boolean(ajax_active_listings) || isOverviewTab;
+        const needsUsers = activeTab === 'users' || activeTab === 'permissions';
+        const needsTeam = activeTab === 'team';
+        const needsVisits = activeTab === 'visits';
+        const needsMessages = activeTab === 'messages';
+        const needsKyc = activeTab === 'kyc';
+        const needsSales = activeTab === 'sales';
+        const needsCorporate = activeTab === 'corporate';
+        const needsReferrals = activeTab === 'referrals';
+        const needsBot = activeTab === 'bot';
+        const needsContact = activeTab === 'contact' || activeTab === 'reports';
 
         // PII Masking Helpers for lower-tier admin/support staff
         const isSupport = req.session.user.role === 'support';
@@ -128,13 +159,31 @@ module.exports = function(upload, transporter) {
             LEFT JOIN users u ON p.owner_id = u.id
         `;
 
-        const [pending, visitReports, verified] = await Promise.all([
-            can('view_overview') ? pool.query(`${propertyQuery} WHERE p.verification_status IN ('Unverified', 'Under Review') AND p.id NOT IN (SELECT property_id FROM visits WHERE status = 'completed')`) : Promise.resolve({ rows: [] }),
-            can('view_overview') ? pool.query(`${propertyQuery} WHERE p.verification_status IN ('Unverified', 'Under Review') AND p.id IN (SELECT property_id FROM visits WHERE status = 'completed')`) : Promise.resolve({ rows: [] }),
-            can('view_overview') ? pool.query(`${propertyQuery} WHERE p.verification_status = 'Premium Verified'`) : Promise.resolve({ rows: [] })
+        const [pendingRows, visitReportRows, verifiedRows] = await Promise.all([
+            can('view_overview') && isOverviewTab
+                ? cachedRows(
+                    adminCacheKey('overview-pending', req.session.user.role, { tab: activeTab }),
+                    15,
+                    `${propertyQuery} WHERE p.verification_status IN ('Unverified', 'Under Review') AND p.id NOT IN (SELECT property_id FROM visits WHERE status = 'completed')`
+                )
+                : Promise.resolve([]),
+            can('view_overview') && isOverviewTab
+                ? cachedRows(
+                    adminCacheKey('overview-visit-reports', req.session.user.role, { tab: activeTab }),
+                    15,
+                    `${propertyQuery} WHERE p.verification_status IN ('Unverified', 'Under Review') AND p.id IN (SELECT property_id FROM visits WHERE status = 'completed')`
+                )
+                : Promise.resolve([]),
+            can('view_overview') && isOverviewTab
+                ? cachedRows(
+                    adminCacheKey('overview-verified', req.session.user.role, { tab: activeTab }),
+                    15,
+                    `${propertyQuery} WHERE p.verification_status = 'Premium Verified'`
+                )
+                : Promise.resolve([])
         ]);
         
-        let activeBaseQueryStr = can('manage_properties') ? `${propertyQuery} WHERE p.status IN ('listed', 'reviewing', 'negotiating', 'unlisted')` : '';
+        let activeBaseQueryStr = can('manage_properties') && needsActiveListings ? `${propertyQuery} WHERE p.status IN ('listed', 'reviewing', 'negotiating', 'unlisted')` : '';
         const activeParams = [];
         
         if (search && search.trim()) {
@@ -177,23 +226,44 @@ module.exports = function(upload, transporter) {
         else if (sort === 'listing_type_asc') sortClause = 'p.listing_type ASC';
         else if (sort === 'listing_type_desc') sortClause = 'p.listing_type DESC';
 
-        let activeQueryStr = `${activeBaseQueryStr} ORDER BY ${sortClause}`;
-        
-        // Server-Side Pagination
         const currentPage = parseInt(page) || 1;
         const limit = ajax_active_listings ? Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 1000) : 50;
         const offset = (currentPage - 1) * limit;
+        let activeQueryStr = activeBaseQueryStr ? `${activeBaseQueryStr} ORDER BY ${sortClause}` : '';
         const activeCountParams = [...activeParams];
         const activeCountQuery = activeBaseQueryStr ? `SELECT COUNT(*) AS total FROM (${activeBaseQueryStr}) AS active_base` : '';
-        activeParams.push(limit);
-        const limitIdx = activeParams.length;
-        activeParams.push(offset);
-        const offsetIdx = activeParams.length;
-        activeQueryStr += ` LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+        if (activeQueryStr) {
+            activeParams.push(limit);
+            const limitIdx = activeParams.length;
+            activeParams.push(offset);
+            const offsetIdx = activeParams.length;
+            activeQueryStr += ` LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+        }
         
-        const active = activeQueryStr ? await pool.query(activeQueryStr, activeParams) : { rows: [] };
-        const activeCountResult = activeCountQuery ? await pool.query(activeCountQuery, activeCountParams) : { rows: [{ total: 0 }] };
-        const activeTotal = parseInt(activeCountResult.rows[0]?.total || '0', 10);
+        const activePayload = activeQueryStr
+            ? await fetchWithCache(
+                adminCacheKey('active-properties', req.session.user.role, {
+                    tab: activeTab,
+                    search,
+                    sort,
+                    page: currentPage,
+                    limit,
+                    ajax_active_listings: Boolean(ajax_active_listings)
+                }),
+                15,
+                async () => {
+                    const [rows, countRows] = await Promise.all([
+                        pool.query(activeQueryStr, activeParams),
+                        activeCountQuery ? pool.query(activeCountQuery, activeCountParams) : Promise.resolve({ rows: [{ total: 0 }] })
+                    ]);
+                    return {
+                        rows: rows.rows,
+                        total: parseInt(countRows.rows[0]?.total || '0', 10)
+                    };
+                }
+            )
+            : { rows: [], total: 0 };
+        const activeTotal = parseInt(activePayload.total || 0, 10);
         const activePagination = {
             total: activeTotal,
             page: currentPage,
@@ -201,22 +271,22 @@ module.exports = function(upload, transporter) {
             limit
         };
 
-        if (ajax_active_listings) return res.json({ active: can('manage_properties') ? active.rows : [], pagination: activePagination });
+        if (ajax_active_listings) return res.json({ active: can('manage_properties') ? activePayload.rows : [], pagination: activePagination });
         
         let team = [];
-        if (can('manage_team')) {
+        if (can('manage_team') && needsTeam) {
             const teamRes = await pool.query("SELECT id, username, email, phone, role, created_at FROM users WHERE role = 'support' AND username != 'Saksh'");
             team = teamRes.rows;
         }
 
         const uPage = parseInt(users_page) || 1;
-        const usersRes = can('view_users') ? await pool.query("SELECT id, username, name, email, phone, role, parent_id, sales_agent_type, parent_type, created_at, is_active, account_number, agency_name, corporate_type, gst_number, rera_number, avatar_url, company_logo FROM users WHERE username != 'Saksh' ORDER BY created_at DESC LIMIT 50 OFFSET $1", [(uPage - 1) * 50]) : { rows: [] };
+        const usersRes = can('view_users') && needsUsers ? await pool.query("SELECT id, username, name, email, phone, role, parent_id, sales_agent_type, parent_type, created_at, is_active, account_number, agency_name, corporate_type, gst_number, rera_number, avatar_url, company_logo FROM users WHERE username != 'Saksh' ORDER BY created_at DESC LIMIT 50 OFFSET $1", [(uPage - 1) * 50]) : { rows: [] };
         const users = usersRes.rows;
 
-        const tenantsRes = can('manage_visits') ? await pool.query("SELECT id, username, email FROM users WHERE role IN ('tenant', 'owner') ORDER BY created_at DESC LIMIT 200") : { rows: [] };
+        const tenantsRes = can('manage_visits') && needsVisits ? await pool.query("SELECT id, username, email FROM users WHERE role IN ('tenant', 'owner') ORDER BY created_at DESC LIMIT 200") : { rows: [] };
         const tenantsList = tenantsRes.rows;
 
-        const chatsRes = can('view_messages') ? await pool.query(`
+        const chatsRes = can('view_messages') && needsMessages ? await pool.query(`
             SELECT p.id, p.title, pc.last_message, pc.id as conversation_id, pc.last_message_at as created_at,
                    u_buyer.username as sender_username
             FROM property_conversations pc
@@ -228,7 +298,7 @@ module.exports = function(upload, transporter) {
         const chats = chatsRes ? chatsRes.rows : [];
 
         const vPage = parseInt(visits_page) || 1;
-        const visitsRes = can('manage_visits') ? await pool.query(`
+        const visitsRes = can('manage_visits') && needsVisits ? await pool.query(`
             SELECT v.*, p.title as property_title, p.photos, u.username as renter_name, u.phone as renter_phone,
                    a.username as agent_name, parent.username as parent_name
             FROM visits v
@@ -241,7 +311,7 @@ module.exports = function(upload, transporter) {
         `, [(vPage - 1) * 50]) : null;
         const visits = visitsRes ? visitsRes.rows : [];
 
-        const assignedVisitsRes = can('manage_visits') ? await pool.query(`
+        const assignedVisitsRes = can('manage_visits') && needsVisits ? await pool.query(`
             SELECT v.*, p.title as property_title, p.photos, u.username as renter_name, u.phone as renter_phone,
                    a.username as agent_name, parent.username as parent_name
             FROM visits v
@@ -254,7 +324,7 @@ module.exports = function(upload, transporter) {
             LIMIT 100
         `) : { rows: [] };
         const assignedVisitsList = assignedVisitsRes.rows;
-        const kycRes = can('manage_kyc') ? await pool.query(`
+        const kycRes = can('manage_kyc') && needsKyc ? await pool.query(`
             SELECT u.id, u.username, u.email, u.phone, u.agency_name, k.doc_type, k.file_path, k.document_number
             FROM users u 
             JOIN kyc_docs k ON u.id = k.user_id 
@@ -267,9 +337,9 @@ module.exports = function(upload, transporter) {
         });
         const kycPending = Object.values(kycMap);
 
-        const dealers = can('view_users') ? await pool.query("SELECT * FROM users WHERE role = 'dealer'") : { rows: [] };
-        const botResponses = can('manage_bot') ? await BotService.getResponses() : [];
-        const assignableAgentsRes = can('manage_sales') ? await pool.query(`
+        const dealers = can('view_users') && needsUsers ? await pool.query("SELECT * FROM users WHERE role = 'dealer'") : { rows: [] };
+        const botResponses = can('manage_bot') && needsBot ? await BotService.getResponses() : [];
+        const assignableAgentsRes = can('manage_sales') && needsSales ? await pool.query(`
             SELECT users.id, users.username, users.email, users.account_number, users.role, users.parent_id, users.sales_agent_type, users.parent_type,
                    parent.username as parent_name,
                    (SELECT AVG(rating) FROM user_reviews WHERE target_user_id = users.id) as rating,
@@ -281,7 +351,7 @@ module.exports = function(upload, transporter) {
         `) : { rows: [] };
         const assignableAgents = assignableAgentsRes.rows;
 
-        const allLeadsRes = can('manage_sales') ? await pool.query(`
+        const allLeadsRes = can('manage_sales') && needsSales ? await pool.query(`
             SELECT l.*, u.username as agent_name 
             FROM leads l 
             LEFT JOIN users u ON l.agent_id = u.id 
@@ -289,20 +359,20 @@ module.exports = function(upload, transporter) {
         `) : { rows: [] };
         const allLeads = allLeadsRes.rows;
 
-        const pendingCorporate = can('manage_corporate') ? await pool.query("SELECT * FROM users WHERE role = 'corporate' AND is_domain_approved = FALSE") : { rows: [] };
+        const pendingCorporate = can('manage_corporate') && needsCorporate ? await pool.query("SELECT * FROM users WHERE role = 'corporate' AND is_domain_approved = FALSE") : { rows: [] };
 
-        const referralsRes = can('manage_referrals') ? await pool.query(`SELECT r.*, u1.name as referrer_name, u1.role as referrer_role, u2.name as referred_name, u2.role as referred_role FROM referrals r JOIN users u1 ON r.referrer_id = u1.id JOIN users u2 ON r.referred_user_id = u2.id ORDER BY r.created_at DESC`) : { rows: [] };
+        const referralsRes = can('manage_referrals') && needsReferrals ? await pool.query(`SELECT r.*, u1.name as referrer_name, u1.role as referrer_role, u2.name as referred_name, u2.role as referred_role FROM referrals r JOIN users u1 ON r.referrer_id = u1.id JOIN users u2 ON r.referred_user_id = u2.id ORDER BY r.created_at DESC`) : { rows: [] };
         const referralsList = referralsRes.rows;
-        const withdrawalsRes = can('manage_referrals') ? await pool.query(`SELECT w.*, u.name, u.account_number, u.email FROM withdrawals w JOIN users u ON w.user_id = u.id ORDER BY w.created_at DESC`) : { rows: [] };
+        const withdrawalsRes = can('manage_referrals') && needsReferrals ? await pool.query(`SELECT w.*, u.name, u.account_number, u.email FROM withdrawals w JOIN users u ON w.user_id = u.id ORDER BY w.created_at DESC`) : { rows: [] };
         const withdrawalsList = withdrawalsRes.rows;
-        const contactMessagesRes = can('view_users') ? await pool.query(`
+        const contactMessagesRes = can('view_users') && needsContact ? await pool.query(`
             SELECT id, name, email, phone, topic, message, created_at
             FROM contact_messages
             ORDER BY created_at DESC
             LIMIT 500
         `).catch(() => ({ rows: [] })) : { rows: [] };
         const contactMessages = contactMessagesRes.rows;
-        const issueReportsRes = can('view_users') ? await pool.query(`
+        const issueReportsRes = can('view_users') && needsContact ? await pool.query(`
             SELECT r.id, r.user_id, r.reported_username, r.reason, r.description, r.status, r.created_at,
                    u.username AS reporter_username, u.email AS reporter_email
             FROM reports r
@@ -312,7 +382,7 @@ module.exports = function(upload, transporter) {
         `).catch(() => ({ rows: [] })) : { rows: [] };
         const issueReports = issueReportsRes.rows;
 
-        const referralStatsRes = can('manage_referrals') ? await pool.query(`
+        const referralStatsRes = can('manage_referrals') && needsReferrals ? await pool.query(`
             SELECT 
                 COUNT(*) as total_referrals,
                 SUM(CASE WHEN referral_type = 'partner' THEN 1 ELSE 0 END) as partner_referrals,
@@ -323,13 +393,13 @@ module.exports = function(upload, transporter) {
         const referralStats = referralStatsRes.rows[0] || {};
 
         // Fetch permissions for the UI (Gracefully fallback if tables don't exist yet)
-        const permsRes = can('manage_permissions') ? await pool.query("SELECT * FROM permissions ORDER BY id ASC").catch(() => ({ rows: [] })) : { rows: [] };
+        const permsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM permissions ORDER BY id ASC").catch(() => ({ rows: [] })) : { rows: [] };
         const allPermissions = permsRes.rows;
 
-        const rolePermsRes = can('manage_permissions') ? await pool.query("SELECT * FROM role_permissions").catch(() => ({ rows: [] })) : { rows: [] };
+        const rolePermsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM role_permissions").catch(() => ({ rows: [] })) : { rows: [] };
         const rolePermissions = rolePermsRes.rows;
 
-        const userPermsRes = can('manage_permissions') ? await pool.query("SELECT * FROM user_permissions").catch(() => ({ rows: [] })) : { rows: [] };
+        const userPermsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM user_permissions").catch(() => ({ rows: [] })) : { rows: [] };
         const userPermissions = userPermsRes.rows;
 
         let corporateClients = [];
@@ -337,7 +407,7 @@ module.exports = function(upload, transporter) {
         let corporateRequirements = [];
         let pendingSuggestions = [];
 
-        if (can('manage_corporate')) {
+        if (can('manage_corporate') && needsCorporate) {
             const corpRes = await pool.query(`
                 SELECT c.id, c.username, c.agency_name, c.email, c.phone, c.account_number, c.is_domain_approved, c.company_logo, c.avatar_url, rm.username as rm_name, c.rm_id, c.created_at
                 FROM users c
@@ -370,7 +440,7 @@ module.exports = function(upload, transporter) {
                 `);
                 pendingSuggestions = suggRes.rows;
             } catch(e) {}
-        } else if (req.session.user.role === 'support' && can('manage_corporate')) { // Support can only see their assigned clients
+        } else if (req.session.user.role === 'support' && can('manage_corporate') && needsCorporate) { // Support can only see their assigned clients
             const corpRes = await pool.query(`
                 SELECT c.id, c.username, c.agency_name, c.email, c.phone, c.account_number, c.is_domain_approved, c.company_logo, c.avatar_url, rm.username as rm_name, c.rm_id, c.created_at
                 FROM users c
@@ -404,19 +474,23 @@ module.exports = function(upload, transporter) {
         }
 
         // Fetch recent messages for active properties
-        const activeIds = active.rows.map(p => p.id);
+        const activeIds = isOverviewTab ? activePayload.rows.map(p => p.id) : [];
         let allConversations = [];
         if (activeIds.length > 0) {
-            const convsRes = await pool.query(`
-                SELECT pc.*, u_buyer.username as buyer_username
-                FROM property_conversations pc
-                JOIN users u_buyer ON pc.buyer_id = u_buyer.id
-                WHERE pc.property_id = ANY($1::int[])
-            `, [activeIds]);
-            allConversations = convsRes.rows;
+            allConversations = await cachedRows(
+                adminCacheKey('active-conversations', req.session.user.role, { ids: activeIds.join(',') }),
+                15,
+                `
+                    SELECT pc.*, u_buyer.username as buyer_username
+                    FROM property_conversations pc
+                    JOIN users u_buyer ON pc.buyer_id = u_buyer.id
+                    WHERE pc.property_id = ANY($1::int[])
+                `,
+                [activeIds]
+            );
         }
 
-        for (let p of active.rows) {
+        for (let p of activePayload.rows) {
             const propConvs = allConversations.filter(c => c.property_id === p.id);
             p.inquiry_count = propConvs.length;
             p.threads = {};
@@ -427,7 +501,7 @@ module.exports = function(upload, transporter) {
         
         const payload = { 
             user: req.session.user,
-            pending: pending.rows, visitReports: visitReports.rows, verified: verified.rows, active: active.rows,
+            pending: pendingRows, visitReports: visitReportRows, verified: verifiedRows, active: activePayload.rows,
             team: maskSupportRows(team),
             users: maskSupportRows(users),
             tenantsList: maskSupportRows(tenantsList),
@@ -604,6 +678,7 @@ module.exports = function(upload, transporter) {
             const salesAgentType = role === 'external_sales' ? 'independent' : null;
             const result = await pool.query('INSERT INTO users (name, username, account_number, email, password_hash, role, phone, sales_agent_type, parent_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL) RETURNING id', [name, uniqueUsername, nextAccountNumber.toString(), email, hash, role, phone, salesAgentType]);
             await addToPasswordHistory(result.rows[0].id, hash);
+            await invalidateUserPermissionCache(result.rows[0].id);
             
             if (phone) {
                 const loginUrl = `http://${req.headers.host}/login`;
@@ -653,6 +728,7 @@ module.exports = function(upload, transporter) {
                 [name, uniqueUsername, nextAccountNumber.toString(), email, hash, role, phone, agency_name || null, corporate_type || null, !password, parent_id || null, salesAgentType, parentType]
             );
             await addToPasswordHistory(newUser.rows[0].id, hash);
+            await invalidateUserPermissionCache(newUser.rows[0].id);
 
             const loginUrl = `http://${req.headers.host}/login`;
             if (phone) { waService.sendAccountCredentials(phone, name, uniqueUsername, email, finalPassword, loginUrl).catch(e => console.error("WA Error:", e)); }
@@ -670,6 +746,7 @@ module.exports = function(upload, transporter) {
                 return res.redirect('/admin?tab=users&error=' + encodeURIComponent('Cannot disable the system bot.'));
             }
             await pool.query('UPDATE users SET is_active = $1 WHERE id = $2', [is_active === 'true', id]);
+            await invalidateUserPermissionCache(id);
         } catch (err) { console.error("Toggle user status error:", err); }
         res.redirect('/admin?tab=users');
     });
@@ -695,6 +772,7 @@ module.exports = function(upload, transporter) {
                     END
                 WHERE id = $2
             `, [role, id]);
+            await invalidateUserPermissionCache(id);
         } catch (err) { console.error("Update role error:", err); }
         res.redirect('/admin?tab=users');
     });
@@ -727,6 +805,7 @@ module.exports = function(upload, transporter) {
                  WHERE id = $8`,
                 [name, email, phone, role, agency_name || null, gst_number || null, rera_number || null, id]
             );
+            await invalidateUserPermissionCache(id);
             res.redirect('/admin?tab=users&message=User+updated+successfully');
         } catch (err) {
             console.error("Edit user error:", err);
@@ -805,6 +884,7 @@ module.exports = function(upload, transporter) {
             }
             
             await pool.query('DELETE FROM users WHERE id = $1', [targetId]);
+            await invalidateUserPermissionCache(targetId);
             
             // Log the activity
             await pool.query('INSERT INTO activity_logs (admin_id, action, details) VALUES ($1, $2, $3)', [req.session.user.id, 'DELETE_USER', delDetails]).catch(e => console.error('Activity log error:', e));
@@ -839,6 +919,7 @@ module.exports = function(upload, transporter) {
                 await pool.query('INSERT INTO role_permissions (role_name, permission_id) VALUES ($1, $2)', [role_name, permId]);
             }
             await pool.query('COMMIT');
+            await invalidateRolePermissionCache(role_name);
         } catch (err) {
             await pool.query('ROLLBACK');
             console.error("Role permission update error:", err);
@@ -869,6 +950,7 @@ module.exports = function(upload, transporter) {
                 }
             }
             await pool.query('COMMIT');
+            await invalidateUserPermissionCache(user_id);
         } catch (err) {
             await pool.query('ROLLBACK');
             console.error("User permission override error:", err);

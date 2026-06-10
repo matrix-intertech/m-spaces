@@ -1,26 +1,34 @@
-require('dotenv').config();
+const { loadEnv } = require('./load-env');
+loadEnv();
+
 const { Pool } = require('pg');
 
-const hasDatabaseUrl = !!process.env.DATABASE_URL;
+function cleanEnv(value) {
+  if (value === undefined || value === null) return '';
+  return String(value).trim().replace(/^['"]|['"]$/g, '');
+}
+
+const databaseUrl = cleanEnv(process.env.DATABASE_URL);
+const hasDatabaseUrl = databaseUrl.length > 0;
 
 const poolConfig = hasDatabaseUrl
   ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      connectionString: databaseUrl,
+      ssl: { rejectUnauthorized: false }
     }
   : {
-      user: process.env.DB_USER,
-      host: process.env.DB_HOST,
-      database: process.env.DB_NAME,
-      password: process.env.DB_PASSWORD,
-      port: process.env.DB_PORT,
+      user: cleanEnv(process.env.DB_USER) || undefined,
+      host: cleanEnv(process.env.DB_HOST) || undefined,
+      database: cleanEnv(process.env.DB_NAME) || undefined,
+      password: cleanEnv(process.env.DB_PASSWORD) || undefined,
+      port: Number.parseInt(cleanEnv(process.env.DB_PORT), 10) || 5432
     };
 
 const pool = new Pool({
   ...poolConfig,
-  max: 30, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds to free up memory
-  connectionTimeoutMillis: 3000, // Return an error after 3s if DB is unresponsive
+  max: 30,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 3000
 });
 
 module.exports = pool;

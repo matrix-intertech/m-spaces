@@ -1,5 +1,6 @@
 const pool = require('./db');
 const supportPolicy = require('./policies/support-policy');
+const { fetchWithCache, invalidateCache } = require('./redis-cache');
 
 const BUILDER_DEFAULT_PERMISSIONS = [
     'view_builder_dashboard',
@@ -30,7 +31,11 @@ const INDEPENDENT_SALES_DEFAULT_PERMISSIONS = [
     ...SALES_DEFAULT_PERMISSIONS
 ];
 
-async function getUserPermissions(userId) {
+function permissionCacheKey(userId) {
+    return `permissions:user:${userId}`;
+}
+
+async function loadUserPermissions(userId) {
     if (!userId) return [];
     const userRes = await pool.query('SELECT role, parent_id, sales_agent_type FROM users WHERE id = $1', [userId]);
     if (userRes.rows.length === 0) return [];
@@ -86,6 +91,22 @@ async function getUserPermissions(userId) {
     return Array.from(effectivePerms);
 }
 
+async function getUserPermissions(userId) {
+    if (!userId) return [];
+    return fetchWithCache(permissionCacheKey(userId), 60, () => loadUserPermissions(userId));
+}
+
+async function invalidateUserPermissionCache(userId) {
+    if (!userId) return;
+    await invalidateCache(permissionCacheKey(userId));
+}
+
+async function invalidateRolePermissionCache(roleName) {
+    if (!roleName) return;
+    const usersRes = await pool.query('SELECT id FROM users WHERE role = $1', [roleName]);
+    await Promise.all(usersRes.rows.map((row) => invalidateUserPermissionCache(row.id)));
+}
+
 function hasPermission(permission) {
     return async (req, res, next) => {
         if (!req.session.user) return res.status(401).send('Authentication required.');
@@ -114,6 +135,8 @@ function hasAnyPermission(requiredPermissions = []) {
 
 module.exports = {
     getUserPermissions,
+    invalidateUserPermissionCache,
+    invalidateRolePermissionCache,
     hasPermission,
     hasAnyPermission,
     supportPolicy

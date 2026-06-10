@@ -89,6 +89,27 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         return Array.from(optionsByRole.values());
     }
 
+    function loginRedirectPath(user) {
+        const role = String(user && user.role || '').toLowerCase();
+        if (role === 'admin' || role === 'support') return '/admin?tab=overview';
+        if (role === 'owner') return '/owner';
+        if (role === 'builder') return '/builder';
+        if (role === 'broker' || role === 'dealer' || role === 'agent') return '/broker';
+        if (role === 'external_sales') return '/sales';
+        if (role === 'corporate' || role === 'corporate_user') return '/corporate';
+        return '/';
+    }
+
+    function saveSessionAndRespond(req, res, onSuccess) {
+        req.session.save((error) => {
+            if (error) {
+                console.error('Session save error:', error);
+                return res.status(500).json({ error: 'Failed to persist login session.' });
+            }
+            return onSuccess();
+        });
+    }
+
     /**
      * Checks if a referred user has met all conditions and completes the referral if so.
      * @param {number} userId - The ID of the referred user.
@@ -290,8 +311,8 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
             req.session.user = normalizeStandardProfileUser(user);
             req.session.cookie.maxAge = 60 * 60 * 1000; // 1 hour timeout
 
-            const redirectUrl = '/';
-            return res.json({ success: true, redirect: redirectUrl });
+            const redirectUrl = loginRedirectPath(user);
+            return saveSessionAndRespond(req, res, () => res.json({ success: true, redirect: redirectUrl }));
         } catch (err) {
             console.error("OTP Login Error:", err);
             return res.status(500).json({ error: 'Server error during login.' });
@@ -479,8 +500,8 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
 
             const redirectUrl = shouldShowLinkedAccounts
                 ? '/edit-profile?message=This+phone+number+has+multiple+accounts.+Select+any+old+account+you+want+to+delete.'
-                : '/';
-            return res.json({ success: true, redirect: redirectUrl });
+                : loginRedirectPath(user);
+            return saveSessionAndRespond(req, res, () => res.json({ success: true, redirect: redirectUrl }));
         } catch (err) {
             console.error("WhatsApp OTP Login Error:", err);
             return res.status(500).json({ error: 'Server error during login.' });
@@ -829,15 +850,15 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                 const isDemo = (user.name || '').toLowerCase().includes('demo') || (user.username || '').toLowerCase().includes('demo');
                 if (!isDemo && (user.profile_completed === false || isRandomName(user.name))) {
                     req.session.user = normalizeStandardProfileUser(user); // Temporarily set session user to access role
-                    return res.redirect('/complete-profile');
+                    return saveSessionAndRespond(req, res, () => res.redirect('/complete-profile'));
                 }
                 if (user.is_two_factor_enabled) {
                     req.session.temp_2fa_user_id = user.id;
                     req.session.temp_2fa_remember = !!remember;
                     if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                        return res.json({ requires2FA: true });
+                        return saveSessionAndRespond(req, res, () => res.json({ requires2FA: true }));
                     }
-                    return res.render('login-2fa', { error: null });
+                    return saveSessionAndRespond(req, res, () => res.render('login-2fa', { error: null }));
                 }
 
                 // Auto-generate referral code for legacy accounts
@@ -848,12 +869,13 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
 
                 req.session.user = normalizeStandardProfileUser(user);
                 req.session.cookie.maxAge = remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+                const redirectPath = loginRedirectPath(user);
 
                 if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                    return res.json({ success: true, user: normalizeStandardProfileUser(user) });
+                    return saveSessionAndRespond(req, res, () => res.json({ success: true, user: normalizeStandardProfileUser(user), redirect: redirectPath }));
                 }
 
-                return res.redirect('/');
+                return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));
             }
         }
         if (req.headers.accept && req.headers.accept.includes('application/json')) {
@@ -890,7 +912,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
             delete req.session.temp_2fa_user_id;
             delete req.session.temp_2fa_remember;
 
-            return res.redirect('/');
+            return saveSessionAndRespond(req, res, () => res.redirect('/'));
         } else {
             res.render('login-2fa', { error: 'Invalid authentication code or recovery code' });
         }

@@ -45,7 +45,7 @@ const agentServices = [
 ];
 
 function dashboardPath(role?: string | null) {
-  if (role === "admin" || role === "support") return "/admin";
+  if (role === "admin" || role === "support") return "/admin?tab=overview";
   if (role === "owner") return "/owner";
   if (role === "builder") return "/builder";
   if (role === "broker" || role === "agent" || role === "dealer") return "/broker";
