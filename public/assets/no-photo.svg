@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Property image unavailable">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dbeafe"/>
+      <stop offset="100%" stop-color="#bfdbfe"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="800" fill="url(#bg)"/>
+  <rect x="80" y="80" width="1040" height="640" rx="28" fill="#ffffff" stroke="#cbd5e1" stroke-width="4"/>
+  <rect x="120" y="120" width="960" height="420" rx="18" fill="url(#sky)"/>
+
+  <circle cx="290" cy="235" r="46" fill="#fef3c7"/>
+  <path d="M170 500l165-182c14-16 39-16 53 0l98 108 125-144c14-16 39-17 55-2l134 126 80-86c13-14 34-15 48-2l112 102v20H170z" fill="#93c5fd"/>
+  <path d="M220 500l112-122c10-12 28-12 39-1l77 72 96-109c11-12 29-13 42-2l106 93 70-74c10-11 27-11 38-1l100 90v54H220z" fill="#60a5fa"/>
+
+  <rect x="120" y="566" width="960" height="114" rx="16" fill="#f8fafc"/>
+  <text x="600" y="628" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="700" text-anchor="middle">Image Not Available</text>
+</svg>

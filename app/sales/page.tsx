@@ -1,0 +1,10 @@
+import type { Metadata } from "next";
+import { renderDashboardPage } from "@/lib/dashboardPage";
+
+export const metadata: Metadata = {
+  title: "Sales Dashboard"
+};
+
+export default async function SalesDashboardPage() {
+  return renderDashboardPage("sales");
+}
