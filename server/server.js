@@ -260,15 +260,20 @@ function isLegacyEjsView() {
     return false;
 }
 
-// Ensure all local upload directories exist on server startup to prevent ENOENT crashes
-const localUploadsDir = path.join(FRONTEND_PATH, 'public/uploads/');
-if (!fs.existsSync(localUploadsDir)) fs.mkdirSync(localUploadsDir, { recursive: true });
+function ensureDirectory(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+    return dirPath;
+}
 
-const localKycDir = path.join(__dirname, 'kyc_uploads');
-if (!fs.existsSync(localKycDir)) fs.mkdirSync(localKycDir, { recursive: true });
-
-const localVaultDir = path.join(__dirname, 'vault_uploads');
-if (!fs.existsSync(localVaultDir)) fs.mkdirSync(localVaultDir, { recursive: true });
+const writableRuntimeRoot = process.env.VERCEL ? '/tmp/m-spaces' : __dirname;
+const runtimeUploadsPublicDir = process.env.VERCEL
+    ? path.join(writableRuntimeRoot, 'public', 'uploads')
+    : path.join(FRONTEND_PATH, 'public', 'uploads');
+const localUploadsDir = ensureDirectory(runtimeUploadsPublicDir);
+const localKycDir = ensureDirectory(path.join(writableRuntimeRoot, 'kyc_uploads'));
+const localVaultDir = ensureDirectory(path.join(writableRuntimeRoot, 'vault_uploads'));
 
 // Trust the reverse proxy (Nginx/Load Balancer) to correctly identify HTTPS protocol
 app.set('trust proxy', 1);
@@ -803,8 +808,7 @@ const docFilter = (req, file, cb) => {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(FRONTEND_PATH, 'public/uploads/');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const dir = localUploadsDir;
         cb(null, dir);
     },
     filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
@@ -833,7 +837,7 @@ initS3Folders();
 
 const localPropertyStorage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, path.join(FRONTEND_PATH, 'public/uploads/'));
+        cb(null, localUploadsDir);
     },
     filename: (req, file, cb) => {
         const folder = file.fieldname === 'company_logo' ? 'logos' : 'properties';
