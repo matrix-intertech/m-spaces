@@ -73,12 +73,19 @@ async function postAuth(path: string, body: Record<string, unknown>): Promise<{ 
     try {
       payload = JSON.parse(rawText) as AuthPayload & { error?: string };
     } catch {
-      payload = { error: rawText.trim() || undefined };
+      const trimmed = rawText.trim();
+      payload = {
+        error: /<!doctype html|<html/i.test(trimmed)
+          ? undefined
+          : trimmed || undefined
+      };
     }
   }
   if (!response.ok) {
     const fallbackMessage = response.status
-      ? `Request failed (${response.status})`
+      ? response.status >= 500
+        ? `Server error (${response.status})`
+        : `Request failed (${response.status})`
       : "Request failed";
     throw new Error(payload.error ?? payload.message ?? fallbackMessage);
   }

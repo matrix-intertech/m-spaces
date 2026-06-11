@@ -57,10 +57,10 @@ const RedisSessionStore = require('./redis-session-store');
 const ensurePerformanceIndexes = require('./ensure-performance-indexes');
 
 const cors = require('cors');
-const app = express();
-const server = http.createServer(app);
 const isVercelRuntime = process.env.VERCEL === '1' || process.env.VERCEL === 'true';
 const isEmbeddedBackend = process.env.MATRIX_EMBEDDED_BACKEND === '1' || process.env.MATRIX_EMBEDDED_BACKEND === 'true';
+const app = express();
+const server = (!isVercelRuntime && !isEmbeddedBackend) ? http.createServer(app) : null;
 
 function normalizeOrigin(value) {
     if (!value) return null;
@@ -176,7 +176,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
-const io = new Server(server, {
+const io = server ? new Server(server, {
     cors: {
         origin(origin, callback) {
             if (!origin) return callback(null, true);
@@ -187,7 +187,7 @@ const io = new Server(server, {
         credentials: true
     },
     maxHttpBufferSize: 2e6 // 2MB limit for WebSocket payloads to prevent DoS
-});
+}) : null;
 
 // Allow configuring the frontend repository path via .env for separate repositories
 const configuredFrontendPath = process.env.FRONTEND_PATH ? path.resolve(process.env.FRONTEND_PATH) : null;
@@ -1317,13 +1317,20 @@ const gracefulShutdown = () => {
     shutdownImageWorkers(); // Terminate image processing worker threads
     if (emailWorker) emailWorker.close();
     if (redisClient) redisClient.quit();
-    server.close(() => {
-        console.log('Closed out remaining HTTP connections.');
+    const closePoolAndExit = () => {
         pool.end(() => {
             console.log('Database connection pool closed.');
             process.exit(0);
         });
-    });
+    };
+    if (server) {
+        server.close(() => {
+            console.log('Closed out remaining HTTP connections.');
+            closePoolAndExit();
+        });
+    } else {
+        closePoolAndExit();
+    }
     setTimeout(() => {
         console.error('Could not close connections in time, forcefully shutting down');
         process.exit(1);
