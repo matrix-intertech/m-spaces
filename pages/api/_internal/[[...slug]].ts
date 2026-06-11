@@ -42,47 +42,78 @@ function bodyPayloadForProxy(req: NextApiRequest, rawBody: Buffer): string | Buf
   return rawBody;
 }
 
+function requestPayloadPreview(req: NextApiRequest, rawBody?: Buffer) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (!rawBody || rawBody.length === 0) return null;
+  if (
+    contentType.includes("application/json") ||
+    contentType.includes("application/x-www-form-urlencoded") ||
+    contentType.startsWith("text/")
+  ) {
+    return rawBody.toString("utf8").slice(0, 2000);
+  }
+  return `[binary:${rawBody.length}]`;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const rewrittenUrl = (req.url ?? "/").replace(/^\/api\/_internal/, "") || "/";
   const method = String(req.method || "GET").toLowerCase();
-  const proxyRequest = supertest(serverApp)[method](rewrittenUrl);
+  let rawBody: Buffer | undefined;
 
-  copyHeadersToProxy(proxyRequest, req);
+  try {
+    const proxyRequest = supertest(serverApp)[method](rewrittenUrl);
+    copyHeadersToProxy(proxyRequest, req);
 
-  if (!["get", "head"].includes(method)) {
-    const rawBody = await readRawBody(req);
-    if (rawBody.length > 0) {
-      proxyRequest.send(bodyPayloadForProxy(req, rawBody));
+    if (!["get", "head"].includes(method)) {
+      rawBody = await readRawBody(req);
+      if (rawBody.length > 0) {
+        proxyRequest.send(bodyPayloadForProxy(req, rawBody));
+      }
     }
+
+    const response = await proxyRequest.buffer(true);
+
+    if (response.headers["set-cookie"]) {
+      res.setHeader("Set-Cookie", response.headers["set-cookie"]);
+    }
+
+    if (response.headers.location) {
+      res.setHeader("Location", response.headers.location);
+    }
+
+    if (response.headers["content-type"]) {
+      res.setHeader("Content-Type", response.headers["content-type"]);
+    }
+
+    res.status(response.status);
+
+    if (Buffer.isBuffer(response.body) && response.body.length > 0) {
+      return res.send(response.body);
+    }
+
+    if (typeof response.text === "string" && response.text.length > 0) {
+      return res.send(response.text);
+    }
+
+    if (response.body && Object.keys(response.body).length > 0) {
+      return res.json(response.body);
+    }
+
+    return res.end();
+  } catch (error) {
+    console.error("[Internal API Bridge] Request failed:", {
+      method: req.method,
+      originalUrl: req.url,
+      rewrittenUrl,
+      payloadPreview: requestPayloadPreview(req, rawBody),
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: "Internal API bridge failure",
+      details: error instanceof Error ? error.message : String(error)
+    });
   }
-
-  const response = await proxyRequest.buffer(true);
-
-  if (response.headers["set-cookie"]) {
-    res.setHeader("Set-Cookie", response.headers["set-cookie"]);
-  }
-
-  if (response.headers.location) {
-    res.setHeader("Location", response.headers.location);
-  }
-
-  if (response.headers["content-type"]) {
-    res.setHeader("Content-Type", response.headers["content-type"]);
-  }
-
-  res.status(response.status);
-
-  if (Buffer.isBuffer(response.body) && response.body.length > 0) {
-    return res.send(response.body);
-  }
-
-  if (typeof response.text === "string" && response.text.length > 0) {
-    return res.send(response.text);
-  }
-
-  if (response.body && Object.keys(response.body).length > 0) {
-    return res.json(response.body);
-  }
-
-  return res.end();
 }

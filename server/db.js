@@ -10,6 +10,8 @@ function cleanEnv(value) {
 
 const databaseUrl = cleanEnv(process.env.DATABASE_URL);
 const hasDatabaseUrl = databaseUrl.length > 0;
+const connectionTimeoutMillis = Number.parseInt(cleanEnv(process.env.DB_CONNECTION_TIMEOUT_MS), 10) || (process.env.VERCEL ? 10000 : 3000);
+const idleTimeoutMillis = Number.parseInt(cleanEnv(process.env.DB_IDLE_TIMEOUT_MS), 10) || 30000;
 
 const poolConfig = hasDatabaseUrl
   ? {
@@ -27,8 +29,16 @@ const poolConfig = hasDatabaseUrl
 const pool = new Pool({
   ...poolConfig,
   max: 30,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 3000
+  idleTimeoutMillis,
+  connectionTimeoutMillis
+});
+
+pool.on('error', (error) => {
+  console.error('[DB] Pool error:', {
+    message: error?.message,
+    code: error?.code,
+    stack: error?.stack
+  });
 });
 
 module.exports = pool;

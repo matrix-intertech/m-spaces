@@ -32,6 +32,25 @@ const sendWhatsappOtpSchema = z.object({
     referral_code: z.string().optional(),
 });
 
+const signupAvailabilitySchema = z.object({
+    phone: z.string()
+        .trim()
+        .max(20, { message: "Phone number must be 20 characters or fewer." })
+        .regex(/^\+?\d*$/, { message: "Phone number must contain only digits and an optional '+' sign." })
+        .optional()
+        .or(z.literal('')),
+    username: z.string().trim().max(255).optional().or(z.literal('')),
+    excludeUserId: z.union([z.number().int(), z.string().trim()]).optional()
+}).superRefine((data, ctx) => {
+    if (!data.phone && !data.username) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Phone number or username is required.",
+            path: ['phone']
+        });
+    }
+});
+
 // New schema for standard signup (Broker, Sales Agent, Owner, Tenant)
 const signupSchema = z.object({
     name: z.string().min(1, { message: "Full Name is required." }),
@@ -93,4 +112,4 @@ const profileCompletionSchema = z.object({
 });
 
 
-module.exports = { loginSchema, sendWhatsappOtpSchema, signupSchema, builderSignupSchema, profileCompletionSchema };
+module.exports = { loginSchema, sendWhatsappOtpSchema, signupAvailabilitySchema, signupSchema, builderSignupSchema, profileCompletionSchema };

@@ -107,7 +107,7 @@ function matchesOriginPattern(origin, pattern) {
 function createRequiredSecret(name) {
     const value = String(process.env[name] || '').trim();
     if (value) return value;
-    if (process.env.NODE_ENV !== 'production' || isVercelRuntime) {
+    if (process.env.NODE_ENV !== 'production') {
         const secretFile = path.join(__dirname, `.dev-${name.toLowerCase()}`);
         try {
             if (fs.existsSync(secretFile)) {

@@ -8,7 +8,7 @@ const { sendOtpEmail } = require('./emailService');
 const { validatePassword, isPasswordReused, addToPasswordHistory, generateUniqueUsername, isRandomName } = require('./utils');
 const nodemailer = require('nodemailer');
 const validate = require('./validate'); // We just created this file
-const { sendWhatsappOtpSchema, loginSchema, signupSchema, builderSignupSchema } = require('./auth.schema');
+const { sendWhatsappOtpSchema, signupAvailabilitySchema, loginSchema, signupSchema, builderSignupSchema } = require('./auth.schema');
 const { verifyTurnstile } = require('./captcha');
 const { normalizeStandardProfileUser, sanitizeUserForClient } = require('./profile-utils');
 
@@ -31,6 +31,77 @@ function getConfiguredAppOrigin(req) {
 
 function buildPublicUrl(req, pathname) {
     return new URL(pathname, `${getConfiguredAppOrigin(req)}/`).toString();
+}
+
+function maskValue(value, { keepStart = 2, keepEnd = 2 } = {}) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.length <= keepStart + keepEnd) return '*'.repeat(raw.length);
+    return `${raw.slice(0, keepStart)}${'*'.repeat(Math.max(2, raw.length - keepStart - keepEnd))}${raw.slice(-keepEnd)}`;
+}
+
+function sanitizeAuthPayload(body = {}) {
+    return {
+        email: body.email ? maskValue(body.email, { keepStart: 2, keepEnd: 8 }) : undefined,
+        username: body.username ? maskValue(body.username) : undefined,
+        phone: body.phone ? maskValue(String(body.phone).replace(/\D/g, ''), { keepStart: 2, keepEnd: 2 }) : undefined,
+        role: body.role || undefined,
+        remember: Boolean(body.remember),
+        hasOtp: body.otp ? true : undefined,
+        hasReferralCode: body.referral_code ? true : false,
+        hasName: typeof body.name === 'string' ? body.name.trim().length > 0 : false,
+        hasAgencyName: typeof body.agency_name === 'string' ? body.agency_name.trim().length > 0 : false
+    };
+}
+
+function errorDetails(error, extras = {}) {
+    return {
+        message: error && error.message ? error.message : 'Unknown error',
+        code: error && error.code ? error.code : undefined,
+        stack: error && error.stack ? error.stack : undefined,
+        ...extras
+    };
+}
+
+function isDatabaseConnectivityError(error) {
+    const message = String(error && error.message || '').toLowerCase();
+    return Boolean(
+        (error && ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', '57P01'].includes(error.code)) ||
+        message.includes('connection timeout') ||
+        message.includes('connect') ||
+        message.includes('terminat')
+    );
+}
+
+function sendStructuredJsonError(res, status, errorMessage, details, extras = {}) {
+    return res.status(status).json({
+        success: false,
+        error: errorMessage,
+        details,
+        ...extras
+    });
+}
+
+function logRouteStart(endpoint, req, extras = {}) {
+    console.log(`[Auth] ${endpoint} request`, {
+        method: req.method,
+        path: req.originalUrl || req.path,
+        payload: sanitizeAuthPayload(req.body),
+        ...extras
+    });
+}
+
+function logRouteSuccess(endpoint, extras = {}) {
+    console.log(`[Auth] ${endpoint} success`, extras);
+}
+
+function logRouteFailure(endpoint, error, extras = {}) {
+    console.error(`[Auth] ${endpoint} failed`, {
+        ...extras,
+        message: error && error.message ? error.message : String(error),
+        code: error && error.code ? error.code : undefined,
+        stack: error && error.stack ? error.stack : undefined
+    });
 }
 
 module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whatsappOtpLimiter) {
@@ -104,6 +175,14 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         req.session.save((error) => {
             if (error) {
                 console.error('Session save error:', error);
+                if (wantsJson(req)) {
+                    return sendStructuredJsonError(
+                        res,
+                        500,
+                        'Failed to persist login session.',
+                        errorDetails(error, { sessionUserId: req.session && req.session.user ? req.session.user.id : null })
+                    );
+                }
                 return res.status(500).json({ error: 'Failed to persist login session.' });
             }
             return onSuccess();
@@ -324,6 +403,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
     });
     // WhatsApp OTP Routes (via MSG91)
     router.post('/send-whatsapp-otp', whatsappOtpLimiter, validate(sendWhatsappOtpSchema), async (req, res) => {
+        logRouteStart('send-whatsapp-otp', req);
         const { phone } = req.body;
         const now = Date.now();
 
@@ -363,18 +443,41 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
 
         try {
             const waService = require('./whatsappService');
-            await waService.sendOtpVerification(phone, otp);
+            const providerResponse = await waService.sendOtpVerification(phone, otp);
+            logRouteSuccess('send-whatsapp-otp', {
+                phone: sanitizeAuthPayload({ phone }).phone,
+                providerStatus: providerResponse && (providerResponse.status || providerResponse.type || providerResponse.message || 'ok')
+            });
 
             req.session.save((err) => {
-                if (err) console.error("Session save error:", err);
-                res.json({ message: 'WhatsApp OTP sent successfully' });
+                if (err) {
+                    logRouteFailure('send-whatsapp-otp', err, {
+                        phone: sanitizeAuthPayload({ phone }).phone,
+                        stage: 'session-save'
+                    });
+                    return sendStructuredJsonError(
+                        res,
+                        500,
+                        'Failed to persist WhatsApp OTP session.',
+                        errorDetails(err)
+                    );
+                }
+                res.json({ success: true, message: 'WhatsApp OTP sent successfully' });
             });
         } catch (err) {
-            console.error("WhatsApp OTP Error:", err);
+            logRouteFailure('send-whatsapp-otp', err, {
+                phone: sanitizeAuthPayload({ phone }).phone,
+                stage: 'provider-send'
+            });
             const status = err.code === 'WA_PROVIDER_ERROR' || err.code === 'WA_NOT_CONFIGURED' || err.code === 'WA_NUMBER_MISSING'
                 ? 503
                 : 500;
-            res.status(status).json({ error: err.userMessage || 'Failed to send WhatsApp OTP' });
+            return sendStructuredJsonError(
+                res,
+                status,
+                err.userMessage || 'Failed to send WhatsApp OTP',
+                errorDetails(err, { providerResponse: err.providerResponse || undefined })
+            );
         }
     });
 
@@ -751,11 +854,12 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         return res.redirect(`/login?${query.toString()}`);
     });
 
-    router.post('/signup/check-availability', async (req, res) => {
+    router.post('/signup/check-availability', validate(signupAvailabilitySchema), async (req, res) => {
+        logRouteStart('signup-check-availability', req);
         try {
-            const rawPhone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
-            const rawUsername = typeof req.body.username === 'string' ? req.body.username.trim() : '';
-            const excludeUserId = Number.isInteger(Number(req.body.excludeUserId)) ? Number(req.body.excludeUserId) : null;
+            const rawPhone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
+            const rawUsername = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+            const excludeUserId = Number.isInteger(Number(req.body?.excludeUserId)) ? Number(req.body.excludeUserId) : null;
             const errors = {};
 
             if (rawUsername) {
@@ -779,10 +883,25 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                 if (phoneRes.rows.length > 0) errors.phone = 'This phone number is already in use.';
             }
 
-            return res.json({ ok: true, errors });
+            logRouteSuccess('signup-check-availability', {
+                checkedPhone: Boolean(rawPhone),
+                checkedUsername: Boolean(rawUsername),
+                errorKeys: Object.keys(errors)
+            });
+
+            return res.json({ success: true, ok: true, available: Object.keys(errors).length === 0, errors });
         } catch (err) {
-            console.error('Signup availability check failed:', err);
-            return res.status(500).json({ ok: false, error: 'Could not check availability.' });
+            logRouteFailure('signup-check-availability', err, {
+                payload: sanitizeAuthPayload(req.body)
+            });
+            const status = isDatabaseConnectivityError(err) ? 503 : 500;
+            return sendStructuredJsonError(
+                res,
+                status,
+                status === 503 ? 'Database connection failed during availability check.' : 'Could not check availability.',
+                errorDetails(err),
+                { ok: false }
+            );
         }
     });
 
@@ -856,10 +975,15 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
     });
 
     router.post('/login', authLimiter, validate(loginSchema, 'login', 'login'), async (req, res) => {
+        logRouteStart('login', req);
         try {
             const loginIdentifier = req.body.email || req.body.username;
             const { password, remember } = req.body;
             const result = await pool.query('SELECT * FROM users WHERE email = $1 OR account_number = $1 OR username = $1', [loginIdentifier]);
+            console.log('[Auth] login lookup result', {
+                identifier: req.body.email ? sanitizeAuthPayload({ email: req.body.email }).email : sanitizeAuthPayload({ username: loginIdentifier }).username,
+                matchedUsers: result.rows.length
+            });
 
             if (result.rows.length > 0) {
                 const user = result.rows[0];
@@ -912,6 +1036,11 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                     req.session.user = normalizeStandardProfileUser(user);
                     req.session.cookie.maxAge = remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
                     const redirectPath = loginRedirectPath(user);
+                    logRouteSuccess('login', {
+                        userId: user.id,
+                        role: user.role,
+                        redirectPath
+                    });
 
                     if (wantsJson(req)) {
                         return saveSessionAndRespond(req, res, () => res.json({ success: true, user: sanitizeUserForClient(user), redirect: redirectPath }));
@@ -926,10 +1055,15 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
             }
             return res.render('login', { user: null, error: 'Invalid email, account number, or password', tab: 'login' });
         } catch (error) {
-            console.error('Login Error:', error);
-            const message = 'Unable to complete login right now. Please try again.';
+            logRouteFailure('login', error, {
+                payload: sanitizeAuthPayload(req.body)
+            });
+            const status = isDatabaseConnectivityError(error) ? 503 : 500;
+            const message = status === 503
+                ? 'Database connection failed during login.'
+                : 'Unable to complete login right now. Please try again.';
             if (wantsJson(req)) {
-                return res.status(500).json({ error: message });
+                return sendStructuredJsonError(res, status, message, errorDetails(error));
             }
             return res.render('login', { user: null, error: message, tab: 'login' });
         }
