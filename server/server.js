@@ -897,13 +897,13 @@ const whatsappOtpLimiter = rateLimit({
 });
 
 // --- SOCKET.IO ---
-// Share Express session with Socket.IO so socket.request.session is populated
-if (!isVercelRuntime) {
+// Share Express session with Socket.IO only when a standalone HTTP server exists.
+if (io) {
     io.engine.use(sessionMiddleware);
     setupSockets(io);
     notificationService.initialize(io);
 } else {
-    console.log('Socket.IO bootstrap disabled for Vercel runtime.');
+    console.log('Socket.IO bootstrap disabled for embedded/Vercel runtime.');
 }
 
 // --- ROUTES ---

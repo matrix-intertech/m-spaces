@@ -10,7 +10,7 @@ const nodemailer = require('nodemailer');
 const validate = require('./validate'); // We just created this file
 const { sendWhatsappOtpSchema, loginSchema, signupSchema, builderSignupSchema } = require('./auth.schema');
 const { verifyTurnstile } = require('./captcha');
-const { normalizeStandardProfileUser } = require('./profile-utils');
+const { normalizeStandardProfileUser, sanitizeUserForClient } = require('./profile-utils');
 
 function getConfiguredAppOrigin(req) {
     const candidates = [
@@ -888,7 +888,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                     const redirectPath = loginRedirectPath(user);
 
                     if (wantsJson(req)) {
-                        return saveSessionAndRespond(req, res, () => res.json({ success: true, user: normalizeStandardProfileUser(user), redirect: redirectPath }));
+                        return saveSessionAndRespond(req, res, () => res.json({ success: true, user: sanitizeUserForClient(user), redirect: redirectPath }));
                     }
 
                     return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));

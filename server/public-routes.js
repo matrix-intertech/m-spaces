@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('./db');
 const { fetchWithCache } = require('./redis-cache');
 const { success, error } = require('./responseHandler');
+const { sanitizeUserForClient } = require('./profile-utils');
 
 function getS3BaseUrl() {
     if (process.env.AWS_S3_BUCKET_NAME && process.env.AWS_REGION) {
@@ -452,7 +453,7 @@ module.exports = function() {
 
     router.get('/api/user', (req, res) => {
         if (req.session.user) {
-            return success(res, req.session.user);
+            return success(res, sanitizeUserForClient(req.session.user));
         } else {
             return success(res, null);
         }
