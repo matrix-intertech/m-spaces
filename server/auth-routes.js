@@ -1012,9 +1012,13 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                         return res.render('login', { user: null, error: 'Please verify your email before logging in. A verification link was sent to your email.', tab: 'login' });
                     }
 
-                    // Post-signup profile completion check (Task 3 & 4)
+                    // Do not block JSON login flows on profile-completion redirects.
+                    // Most live accounts still have profile_completed = false, and sending
+                    // fetch-based logins through an immediate /complete-profile redirect was
+                    // producing broken/stale error states on production.
                     const isDemo = (user.name || '').toLowerCase().includes('demo') || (user.username || '').toLowerCase().includes('demo');
-                    if (!isDemo && (user.profile_completed === false || isRandomName(user.name))) {
+                    const needsProfileCompletion = !isDemo && (user.profile_completed === false || isRandomName(user.name));
+                    if (needsProfileCompletion && !wantsJson(req)) {
                         req.session.user = normalizeStandardProfileUser(user);
                         return saveSessionAndRespond(req, res, () => res.redirect('/complete-profile'));
                     }
@@ -1043,7 +1047,12 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                     });
 
                     if (wantsJson(req)) {
-                        return saveSessionAndRespond(req, res, () => res.json({ success: true, user: sanitizeUserForClient(user), redirect: redirectPath }));
+                        return saveSessionAndRespond(req, res, () => res.json({
+                            success: true,
+                            user: sanitizeUserForClient(user),
+                            redirect: redirectPath,
+                            needsProfileCompletion
+                        }));
                     }
 
                     return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));
