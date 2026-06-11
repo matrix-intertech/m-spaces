@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff, KeyRound, LockKeyhole, Mail, Phone } from "lucide-react";
@@ -140,7 +140,9 @@ export function LoginForm() {
     setMessage(null);
   }
 
-  async function handlePasswordLogin(formData: FormData) {
+  async function handlePasswordLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     setError(null);
     setMessage(null);
     setLoading(true);
@@ -178,7 +180,9 @@ export function LoginForm() {
     }
   }
 
-  async function verifyEmailOtp() {
+  async function verifyEmailOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     if (emailOtp.length !== 6) {
       setError("Please enter the 6-digit OTP.");
       return;
@@ -186,7 +190,11 @@ export function LoginForm() {
     setError(null);
     setLoading(true);
     try {
-      const { payload } = await postAuth("/login/otp", { email: emailInput, otp: emailOtp, referral_code: refCode });
+      const { payload } = await postAuth("/login/otp", {
+        email: emailInput,
+        otp: emailOtp,
+        referral_code: formData.get("referral_code") || refCode
+      });
       navigateAfterAuth(payload.redirect || "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid OTP");
@@ -214,7 +222,9 @@ export function LoginForm() {
     }
   }
 
-  async function verifyWhatsAppOtp(formData: FormData) {
+  async function verifyWhatsAppOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
     if (whatsappOtp.length !== 6) {
       setError("Please enter the 6-digit WhatsApp OTP.");
       return;
@@ -300,7 +310,7 @@ export function LoginForm() {
         {authTab === "login" ? (
           <>
             {loginMode === "password" ? (
-              <form action={handlePasswordLogin} style={{ display: "grid", gap: "1rem" }}>
+              <form onSubmit={(event) => void handlePasswordLogin(event)} style={{ display: "grid", gap: "1rem" }}>
                 <label style={{ display: "grid", gap: ".35rem" }}>
                   <span style={{ color: "#374151", fontSize: 12, fontWeight: 800 }}>Email or Account Number</span>
                   <input className="field" name="email" autoComplete="username" required />
@@ -335,7 +345,7 @@ export function LoginForm() {
             ) : null}
 
             {loginMode === "otp" ? (
-              <form action={verifyEmailOtp} style={{ display: "grid", gap: "1rem" }}>
+              <form onSubmit={(event) => void verifyEmailOtp(event)} style={{ display: "grid", gap: "1rem" }}>
                 <label style={{ display: "grid", gap: ".35rem" }}>
                   <span style={{ color: "#374151", fontSize: 12, fontWeight: 800 }}>Email Address</span>
                   <input className="field" type="email" value={emailInput} onChange={(event) => setEmailInput(event.target.value)} readOnly={emailOtpSent} required />
@@ -363,7 +373,7 @@ export function LoginForm() {
             ) : null}
 
             {loginMode === "whatsapp" ? (
-              <form action={verifyWhatsAppOtp} style={{ display: "grid", gap: "1rem" }}>
+              <form onSubmit={(event) => void verifyWhatsAppOtp(event)} style={{ display: "grid", gap: "1rem" }}>
                 <label style={{ display: "grid", gap: ".35rem" }}>
                   <span style={{ color: "#374151", fontSize: 12, fontWeight: 800 }}>Phone Number</span>
                   <input className="field" type="tel" value={phoneInput} onChange={(event) => setPhoneInput(event.target.value)} readOnly={whatsappOtpSent} placeholder="e.g. 9876543210" required />
