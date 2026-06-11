@@ -23,15 +23,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     req.url = rewrittenUrl;
     (req as NextApiRequest & { originalUrl?: string }).originalUrl = rewrittenUrl;
 
-    await new Promise<void>((resolve, reject) => {
-      serverApp(req, res, (error?: unknown) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
+    serverApp(req, res);
+    return;
   } catch (error) {
     console.error("[Internal API Bridge] Request failed:", {
       method: req.method,
