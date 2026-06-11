@@ -5,7 +5,7 @@ const hasRedis = !!(process.env.REDIS_URL || process.env.REDIS_HOST);
 
 if (hasRedis) {
     const Redis = require('ioredis');
-    redisClient = process.env.REDIS_URL 
+    redisClient = process.env.REDIS_URL
         ? new Redis(process.env.REDIS_URL)
         : new Redis({ host: process.env.REDIS_HOST, port: process.env.REDIS_PORT || 6379 });
 
@@ -15,7 +15,9 @@ if (hasRedis) {
         }
     });
 } else {
-    console.log("⚠️  No Redis configuration found. Using fallback local JS Map for caching.");
+    if (process.env.NODE_ENV !== 'production') {
+        console.warn('[Cache] No Redis configuration found. Using in-memory cache fallback.');
+    }
     redisClient = { quit: () => {} }; // Mock quit to prevent crashes during shutdown
 }
 
@@ -32,7 +34,7 @@ const fetchWithCache = async (key, ttlSeconds, fetchCallback) => {
             const cached = await redisClient.get(key);
             if (cached) return JSON.parse(cached);
         } catch (err) {
-            console.error("[Cache] Redis Get Error:", err.message);
+            console.error('[Cache] Redis Get Error:', err.message);
         }
     } else if (!hasRedis) {
         const now = Date.now();
@@ -51,11 +53,11 @@ const fetchWithCache = async (key, ttlSeconds, fetchCallback) => {
             try {
                 await redisClient.setex(key, ttlSeconds, JSON.stringify(data));
             } catch (err) {
-                console.error("[Cache] Redis Set Error:", err.message);
+                console.error('[Cache] Redis Set Error:', err.message);
             }
         } else if (!hasRedis) {
             localCache.set(key, {
-                data: data,
+                data,
                 expiry: Date.now() + (ttlSeconds * 1000)
             });
         }
@@ -66,7 +68,11 @@ const fetchWithCache = async (key, ttlSeconds, fetchCallback) => {
 
 const invalidateCache = async (key) => {
     if (hasRedis && redisClient.status === 'ready') {
-        try { await redisClient.del(key); } catch (err) { console.error("[Cache] Redis Del Error:", err.message); }
+        try {
+            await redisClient.del(key);
+        } catch (err) {
+            console.error('[Cache] Redis Del Error:', err.message);
+        }
     } else {
         localCache.delete(key);
     }
