@@ -67,8 +67,21 @@ async function postAuth(path: string, body: Record<string, unknown>): Promise<{ 
     },
     body: JSON.stringify(body)
   });
-  const payload = (await response.json().catch(() => ({}))) as AuthPayload & { error?: string };
-  if (!response.ok) throw new Error(payload.error ?? payload.message ?? "Request failed");
+  const rawText = await response.text();
+  let payload: AuthPayload & { error?: string } = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as AuthPayload & { error?: string };
+    } catch {
+      payload = { error: rawText.trim() || undefined };
+    }
+  }
+  if (!response.ok) {
+    const fallbackMessage = response.status
+      ? `Request failed (${response.status})`
+      : "Request failed";
+    throw new Error(payload.error ?? payload.message ?? fallbackMessage);
+  }
   return { payload, redirectedTo: response.redirected ? normalizeRedirect(response.url) : undefined };
 }
 

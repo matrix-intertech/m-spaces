@@ -1,7 +1,13 @@
-export const backendBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
-  process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ??
-  "/svc/server";
+const configuredBackendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "");
+const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+
+function resolveBrowserBackendBaseUrl() {
+  if (configuredBackendUrl) return configuredBackendUrl;
+  if (configuredApiBaseUrl && configuredApiBaseUrl.startsWith("/")) return configuredApiBaseUrl;
+  return "/svc/server";
+}
+
+export const backendBaseUrl = resolveBrowserBackendBaseUrl();
 
 export const socketUrl =
   process.env.NEXT_PUBLIC_SOCKET_URL?.replace(/\/$/, "") ?? backendBaseUrl;

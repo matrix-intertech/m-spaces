@@ -22,13 +22,7 @@ const nextConfig: NextConfig = {
     unoptimized: true
   },
   async rewrites() {
-    if (backendOrigin) {
-      return [
-        { source: "/uploads/:path*", destination: `${backendOrigin}/uploads/:path*` }
-      ];
-    }
-
-    return [
+    const internalBridgeRules = [
       { source: "/svc/server/api/properties", destination: "/api/properties" },
       { source: "/svc/server/api/properties/:path*", destination: "/api/properties/:path*" },
       { source: "/svc/server/partners", destination: "/api/partners" },
@@ -36,6 +30,15 @@ const nextConfig: NextConfig = {
       { source: "/uploads/:path*", destination: "/api/_internal/uploads/:path*" },
       { source: "/assets/:path*", destination: "/assets/:path*" }
     ];
+
+    if (backendOrigin) {
+      return [
+        ...internalBridgeRules,
+        { source: "/uploads/:path*", destination: `${backendOrigin}/uploads/:path*` }
+      ];
+    }
+
+    return internalBridgeRules;
   }
 };
 
