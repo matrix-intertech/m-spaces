@@ -2,11 +2,6 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 process.env.MATRIX_EMBEDDED_BACKEND = "1";
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const serverApp = require("../../../server/server");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const supertest = require("supertest");
-
 export const config = {
   api: {
     bodyParser: false,
@@ -61,6 +56,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   let rawBody: Buffer | undefined;
 
   try {
+    // Load the backend bridge lazily so module-resolution/runtime failures are
+    // surfaced as JSON from this handler instead of collapsing the whole Next
+    // API route into the generic Vercel 500 page.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const serverApp = require("../../../server/server");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const supertest = require("supertest");
     const proxyRequest = supertest(serverApp)[method](rewrittenUrl);
     copyHeadersToProxy(proxyRequest, req);
 
