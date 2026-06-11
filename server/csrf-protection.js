@@ -2,12 +2,8 @@ const crypto = require('crypto');
 
 const CSRF_COOKIE_NAME = 'XSRF-TOKEN';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const CSRF_MODE = String(process.env.CSRF_PROTECTION || '').trim().toLowerCase();
-
 function isCsrfEnabled() {
-    if (CSRF_MODE === 'off' || CSRF_MODE === 'false' || CSRF_MODE === '0') return false;
-    if (CSRF_MODE === 'on' || CSRF_MODE === 'true' || CSRF_MODE === '1') return true;
-    return process.env.NODE_ENV === 'production';
+    return false;
 }
 
 function createToken() {
