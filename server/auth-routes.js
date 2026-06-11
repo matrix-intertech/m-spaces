@@ -110,6 +110,10 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         });
     }
 
+    function wantsJson(req) {
+        return Boolean(req.headers.accept && req.headers.accept.includes('application/json'));
+    }
+
     /**
      * Checks if a referred user has met all conditions and completes the referral if so.
      * @param {number} userId - The ID of the referred user.
@@ -826,95 +830,121 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
     });
 
     router.post('/login', authLimiter, validate(loginSchema, 'login', 'login'), async (req, res) => {
-        const loginIdentifier = req.body.email || req.body.username;
-        const { password, remember } = req.body;
-        const result = await pool.query('SELECT * FROM users WHERE email = $1 OR account_number = $1 OR username = $1', [loginIdentifier]); // Use loginIdentifier from schema
-        if (result.rows.length > 0) {
-            const user = result.rows[0];
-            if (await bcrypt.compare(password, user.password_hash)) {
-                if (user.is_active === false) {
-                    if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                        return res.status(403).json({ error: 'Your account has been disabled. Please contact support.' });
+        try {
+            const loginIdentifier = req.body.email || req.body.username;
+            const { password, remember } = req.body;
+            const result = await pool.query('SELECT * FROM users WHERE email = $1 OR account_number = $1 OR username = $1', [loginIdentifier]);
+
+            if (result.rows.length > 0) {
+                const user = result.rows[0];
+                const passwordHash = typeof user.password_hash === 'string' ? user.password_hash : '';
+
+                if (!passwordHash) {
+                    const message = 'Password login is not available for this account.';
+                    if (wantsJson(req)) {
+                        return res.status(401).json({ error: message });
                     }
-                    return res.render('login', { user: null, error: 'Your account has been disabled. Please contact support.', tab: 'login' });
+                    return res.render('login', { user: null, error: message, tab: 'login' });
                 }
 
-                if (!user.is_email_verified && user.role !== 'admin') {
-                    if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                        return res.status(403).json({ error: 'Please verify your email before logging in.' });
+                if (await bcrypt.compare(password, passwordHash)) {
+                    if (user.is_active === false) {
+                        if (wantsJson(req)) {
+                            return res.status(403).json({ error: 'Your account has been disabled. Please contact support.' });
+                        }
+                        return res.render('login', { user: null, error: 'Your account has been disabled. Please contact support.', tab: 'login' });
                     }
-                    return res.render('login', { user: null, error: 'Please verify your email before logging in. A verification link was sent to your email.', tab: 'login' });
-                }
 
-                // Post-signup profile completion check (Task 3 & 4)
-                const isDemo = (user.name || '').toLowerCase().includes('demo') || (user.username || '').toLowerCase().includes('demo');
-                if (!isDemo && (user.profile_completed === false || isRandomName(user.name))) {
-                    req.session.user = normalizeStandardProfileUser(user); // Temporarily set session user to access role
-                    return saveSessionAndRespond(req, res, () => res.redirect('/complete-profile'));
-                }
-                if (user.is_two_factor_enabled) {
-                    req.session.temp_2fa_user_id = user.id;
-                    req.session.temp_2fa_remember = !!remember;
-                    if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                        return saveSessionAndRespond(req, res, () => res.json({ requires2FA: true }));
+                    if (!user.is_email_verified && user.role !== 'admin') {
+                        if (wantsJson(req)) {
+                            return res.status(403).json({ error: 'Please verify your email before logging in.' });
+                        }
+                        return res.render('login', { user: null, error: 'Please verify your email before logging in. A verification link was sent to your email.', tab: 'login' });
                     }
-                    return saveSessionAndRespond(req, res, () => res.render('login-2fa', { error: null }));
+
+                    // Post-signup profile completion check (Task 3 & 4)
+                    const isDemo = (user.name || '').toLowerCase().includes('demo') || (user.username || '').toLowerCase().includes('demo');
+                    if (!isDemo && (user.profile_completed === false || isRandomName(user.name))) {
+                        req.session.user = normalizeStandardProfileUser(user);
+                        return saveSessionAndRespond(req, res, () => res.redirect('/complete-profile'));
+                    }
+
+                    if (user.is_two_factor_enabled) {
+                        req.session.temp_2fa_user_id = user.id;
+                        req.session.temp_2fa_remember = !!remember;
+                        if (wantsJson(req)) {
+                            return saveSessionAndRespond(req, res, () => res.json({ requires2FA: true }));
+                        }
+                        return saveSessionAndRespond(req, res, () => res.render('login-2fa', { error: null }));
+                    }
+
+                    if (!user.referral_code) {
+                        user.referral_code = crypto.randomBytes(4).toString('hex').toUpperCase();
+                        await pool.query('UPDATE users SET referral_code = $1 WHERE id = $2', [user.referral_code, user.id]);
+                    }
+
+                    req.session.user = normalizeStandardProfileUser(user);
+                    req.session.cookie.maxAge = remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+                    const redirectPath = loginRedirectPath(user);
+
+                    if (wantsJson(req)) {
+                        return saveSessionAndRespond(req, res, () => res.json({ success: true, user: normalizeStandardProfileUser(user), redirect: redirectPath }));
+                    }
+
+                    return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));
                 }
-
-                // Auto-generate referral code for legacy accounts
-                if (!user.referral_code) {
-                    user.referral_code = crypto.randomBytes(4).toString('hex').toUpperCase();
-                    await pool.query('UPDATE users SET referral_code = $1 WHERE id = $2', [user.referral_code, user.id]);
-                }
-
-                req.session.user = normalizeStandardProfileUser(user);
-                req.session.cookie.maxAge = remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-                const redirectPath = loginRedirectPath(user);
-
-                if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                    return saveSessionAndRespond(req, res, () => res.json({ success: true, user: normalizeStandardProfileUser(user), redirect: redirectPath }));
-                }
-
-                return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));
             }
+
+            if (wantsJson(req)) {
+                return res.status(401).json({ error: 'Invalid email, account number, or password' });
+            }
+            return res.render('login', { user: null, error: 'Invalid email, account number, or password', tab: 'login' });
+        } catch (error) {
+            console.error('Login Error:', error);
+            const message = 'Unable to complete login right now. Please try again.';
+            if (wantsJson(req)) {
+                return res.status(500).json({ error: message });
+            }
+            return res.render('login', { user: null, error: message, tab: 'login' });
         }
-        if (req.headers.accept && req.headers.accept.includes('application/json')) {
-            return res.status(401).json({ error: 'Invalid email, account number, or password' });
-        }
-        res.render('login', { user: null, error: 'Invalid email, account number, or password', tab: 'login' });
     });
 
     router.post('/login/2fa', authLimiter, async (req, res) => {
-        if (!req.session.temp_2fa_user_id) return res.redirect('/login');
-        const { token } = req.body;
-        
-        const userRes = await pool.query('SELECT * FROM users WHERE id = $1', [req.session.temp_2fa_user_id]);
-        if (userRes.rows.length === 0) return res.redirect('/login');
-        const user = userRes.rows[0];
-        
-        let verified = speakeasy.totp.verify({ secret: user.two_factor_secret, encoding: 'base32', token });
+        try {
+            if (!req.session.temp_2fa_user_id) return res.redirect('/login');
+            const { token } = req.body;
+            
+            const userRes = await pool.query('SELECT * FROM users WHERE id = $1', [req.session.temp_2fa_user_id]);
+            if (userRes.rows.length === 0) return res.redirect('/login');
+            const user = userRes.rows[0];
+            
+            let verified = speakeasy.totp.verify({ secret: user.two_factor_secret, encoding: 'base32', token });
 
-        if (!verified) {
-            const recoveryCodes = JSON.parse(user.recovery_codes || '[]');
-            for (let i = 0; i < recoveryCodes.length; i++) {
-                if (await bcrypt.compare(token, recoveryCodes[i])) {
-                    verified = true;
-                    recoveryCodes.splice(i, 1);
-                    await pool.query('UPDATE users SET recovery_codes = $1 WHERE id = $2', [JSON.stringify(recoveryCodes), user.id]);
-                    break;
+            if (!verified) {
+                const recoveryCodes = JSON.parse(user.recovery_codes || '[]');
+                for (let i = 0; i < recoveryCodes.length; i++) {
+                    if (await bcrypt.compare(token, recoveryCodes[i])) {
+                        verified = true;
+                        recoveryCodes.splice(i, 1);
+                        await pool.query('UPDATE users SET recovery_codes = $1 WHERE id = $2', [JSON.stringify(recoveryCodes), user.id]);
+                        break;
+                    }
                 }
             }
-        }
-        
-        if (verified) {
-            req.session.user = normalizeStandardProfileUser(user);
-            req.session.cookie.maxAge = req.session.temp_2fa_remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-            delete req.session.temp_2fa_user_id;
-            delete req.session.temp_2fa_remember;
+            
+            if (verified) {
+                req.session.user = normalizeStandardProfileUser(user);
+                req.session.cookie.maxAge = req.session.temp_2fa_remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+                delete req.session.temp_2fa_user_id;
+                delete req.session.temp_2fa_remember;
 
-            return saveSessionAndRespond(req, res, () => res.redirect('/'));
-        } else {
-            res.render('login-2fa', { error: 'Invalid authentication code or recovery code' });
+                return saveSessionAndRespond(req, res, () => res.redirect('/'));
+            }
+
+            return res.render('login-2fa', { error: 'Invalid authentication code or recovery code' });
+        } catch (error) {
+            console.error('2FA Login Error:', error);
+            return res.render('login-2fa', { error: 'Unable to complete two-factor login right now.' });
         }
     });
 

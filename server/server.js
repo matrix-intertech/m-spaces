@@ -432,7 +432,8 @@ const sessionStore = wantsRedisSessionStore
     : usePostgresSessionStore
         ? new pgSession({
             pool: pool,
-            tableName: 'session'
+            tableName: 'session',
+            createTableIfMissing: true
         })
         : new session.MemoryStore();
 
