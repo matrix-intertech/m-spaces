@@ -25,15 +25,27 @@ function copyHeadersToProxy(proxyRequest: { set: (key: string, value: string) =>
   }
 }
 
-function bodyPayloadForProxy(req: NextApiRequest, rawBody: Buffer): string | Buffer {
+function bodyPayloadForProxy(req: NextApiRequest, rawBody: Buffer): string | Buffer | Record<string, unknown> {
   const contentType = String(req.headers["content-type"] || "").toLowerCase();
-  if (
-    contentType.includes("application/json") ||
-    contentType.includes("application/x-www-form-urlencoded") ||
-    contentType.startsWith("text/")
-  ) {
-    return rawBody.toString("utf8");
+  const text = rawBody.toString("utf8");
+
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return text;
+    }
   }
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const params = new URLSearchParams(text);
+    return Object.fromEntries(params.entries());
+  }
+
+  if (contentType.startsWith("text/")) {
+    return text;
+  }
+
   return rawBody;
 }
 
