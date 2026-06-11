@@ -725,6 +725,32 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         res.render('partner-signup', { user: req.session.user || null, error: req.query.error || null, message: null, tab: req.query.tab || 'builder', refCode });
     });
 
+    // Preserve legacy or manually-entered backend auth URLs by sending them to
+    // the canonical Next.js pages instead of falling through the bridge.
+    router.get('/signup', (req, res) => {
+        const query = new URLSearchParams();
+        query.set('tab', 'signup');
+        if (req.query && req.query.ref) query.set('ref', String(req.query.ref));
+        if (req.query && req.query.error) query.set('error', String(req.query.error));
+        return res.redirect(`/login?${query.toString()}`);
+    });
+
+    router.get('/signup/builder', (req, res) => {
+        const query = new URLSearchParams();
+        query.set('tab', 'builder');
+        if (req.query && req.query.ref) query.set('ref', String(req.query.ref));
+        if (req.query && req.query.error) query.set('error', String(req.query.error));
+        return res.redirect(`/partner-signup?${query.toString()}`);
+    });
+
+    router.get('/signup/corporate', (req, res) => {
+        const query = new URLSearchParams();
+        query.set('tab', 'corporate');
+        if (req.query && req.query.ref) query.set('ref', String(req.query.ref));
+        if (req.query && req.query.error) query.set('error', String(req.query.error));
+        return res.redirect(`/login?${query.toString()}`);
+    });
+
     router.post('/signup/check-availability', async (req, res) => {
         try {
             const rawPhone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';

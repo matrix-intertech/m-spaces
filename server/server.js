@@ -505,6 +505,11 @@ app.use((req, res, next) => {
 });
 
 function shouldProxyToNext(req) {
+    // In the embedded/Vercel bridge runtime, Next already owns page rendering.
+    // Backend GET requests should stay inside Express so route handlers can
+    // redirect legacy URLs (for example /svc/server/login -> /login).
+    if (isEmbeddedBackend || isVercelRuntime) return false;
+
     const pathname = req.path || '/';
     if (!['GET', 'HEAD'].includes(req.method)) return false;
     if (pathname.startsWith('/_next/')) return true;
