@@ -107,6 +107,18 @@ function matchesOriginPattern(origin, pattern) {
 function createRequiredSecret(name) {
     const value = String(process.env[name] || '').trim();
     if (value) return value;
+
+    // Vercel auth failures were caused by SESSION_SECRET being absent while
+    // AUTH0_SECRET was already configured. Reuse the stable Auth0 secret
+    // instead of crashing the entire backend bridge during bootstrap.
+    if (name === 'SESSION_SECRET') {
+        const auth0Secret = String(process.env.AUTH0_SECRET || '').trim();
+        if (auth0Secret) {
+            console.warn('SESSION_SECRET is missing; falling back to AUTH0_SECRET for session signing.');
+            return auth0Secret;
+        }
+    }
+
     if (process.env.NODE_ENV !== 'production') {
         const secretFile = path.join(__dirname, `.dev-${name.toLowerCase()}`);
         try {
