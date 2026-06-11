@@ -451,7 +451,9 @@ const auth0Config = hasAuth0RuntimeConfig ? {
 
 const requestedSessionStore = String(process.env.SESSION_STORE || '').trim().toLowerCase();
 const wantsRedisSessionStore = requestedSessionStore === 'redis';
-const usePostgresSessionStore = !wantsRedisSessionStore && (process.env.NODE_ENV === 'production' || requestedSessionStore === 'postgres');
+const wantsPostgresSessionStore = requestedSessionStore === 'postgres';
+const isServerlessRuntime = isVercelRuntime || isEmbeddedBackend;
+const usePostgresSessionStore = wantsPostgresSessionStore || (!wantsRedisSessionStore && !isServerlessRuntime && process.env.NODE_ENV === 'production');
 const sessionStore = wantsRedisSessionStore
     ? new RedisSessionStore({
         client: redisClient,
@@ -482,9 +484,13 @@ const sessionMiddleware = session({
 app.use(sessionMiddleware);
 if (wantsRedisSessionStore) {
     console.warn('Using Redis session store.');
+} else if (usePostgresSessionStore) {
+    console.warn('Using Postgres session store.');
 } else if (hasRedisConfig) {
     console.warn('Redis cache configured, but session store remains unchanged because SESSION_STORE is not set to redis.');
-} else if (!usePostgresSessionStore) {
+} else if (isServerlessRuntime) {
+    console.warn('Using in-memory session store for embedded/serverless runtime. Set SESSION_STORE=redis or SESSION_STORE=postgres to override.');
+} else {
     console.warn('Using in-memory session store for local development.');
 }
 if (auth0Config) {
