@@ -136,6 +136,52 @@ function createRequiredSecret(name) {
     throw new Error(`Missing required environment variable: ${name}`);
 }
 
+function summarizeRuntimeEnvironment() {
+    const required = [
+        'DATABASE_URL',
+        'SESSION_SECRET',
+        'AUTH0_SECRET'
+    ];
+    const optionalButImportant = [
+        'JWT_SECRET',
+        'NEXTAUTH_SECRET',
+        'MSG91_AUTH_KEY',
+        'MSG91_WA_NUMBER',
+        'REDIS_URL',
+        'REDIS_HOST'
+    ];
+
+    const missingRequired = required.filter((key) => !String(process.env[key] || '').trim());
+    const missingOptional = optionalButImportant.filter((key) => !String(process.env[key] || '').trim());
+
+    console.log('[Runtime] Environment summary', {
+        nodeEnv: process.env.NODE_ENV,
+        isVercelRuntime,
+        isEmbeddedBackend,
+        hasDatabaseUrl: Boolean(String(process.env.DATABASE_URL || '').trim()),
+        missingRequired,
+        missingOptional
+    });
+}
+
+function serializeError(error) {
+    return {
+        name: error && error.name ? error.name : 'Error',
+        message: error && error.message ? error.message : String(error),
+        code: error && error.code ? error.code : undefined,
+        stack: error && error.stack ? error.stack : undefined
+    };
+}
+
+function requestMeta(req) {
+    return {
+        method: req.method,
+        path: req.originalUrl || req.url,
+        contentType: req.get ? req.get('content-type') : req.headers['content-type'],
+        accept: req.get ? req.get('accept') : req.headers.accept
+    };
+}
+
 const allowedOrigins = new Set([
     ...parseOriginList(process.env.CORS_ORIGINS),
     ...parseOriginList(process.env.FRONTEND_ORIGIN),
@@ -1300,16 +1346,31 @@ app.use((req, res, next) => {
 // Global Error Handlers
 app.use((err, req, res, next) => {
     const statusCode = err.status || 500;
+    const errorPayload = serializeError(err);
+    const meta = requestMeta(req);
+
     if (statusCode !== 404) {
-        console.error("Unhandled Error:", err.stack || err.message);
+        console.error('[HTTP] Unhandled error', {
+            ...meta,
+            error: errorPayload,
+            body: req.body && typeof req.body === 'object' ? req.body : undefined
+        });
     }
+
     const isDevelopment = process.env.NODE_ENV === 'development';
     
     if (req.headers.accept && req.headers.accept.includes('application/json')) {
-        res.status(statusCode).json({ 
-            status: 'error',
+        res.status(statusCode).json({
+            success: false,
+            error: statusCode === 404
+                ? 'Route not found'
+                : (errorPayload.message || 'Internal server error'),
             code: statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR',
-            message: isDevelopment ? err.message : 'An unexpected error occurred.' 
+            details: {
+                ...meta,
+                code: errorPayload.code,
+                ...(isDevelopment ? { stack: errorPayload.stack } : {})
+            }
         });
     } else {
         const message = statusCode === 404 ? 'Page Not Found' : 'Server Error';
@@ -1329,6 +1390,7 @@ app.use((err, req, res, next) => {
 
 // --- Start the server ---
 const PORT = process.env.PORT || 3000;
+summarizeRuntimeEnvironment();
 ensurePerformanceIndexes().catch((error) => {
     console.warn('[DB] Performance index bootstrap warning:', error.message);
 });
