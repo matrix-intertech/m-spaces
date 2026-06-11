@@ -404,8 +404,20 @@ app.use((req, res, next) => {
     next();
 });
 app.use(express.static(path.join(FRONTEND_PATH, 'public')));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+
+const jsonBodyParser = express.json({ limit: '5mb' });
+const urlencodedBodyParser = express.urlencoded({ extended: true, limit: '5mb' });
+
+app.use((req, res, next) => {
+    if (req.headers['x-embedded-body-parsed'] === '1' && typeof req.body !== 'undefined') {
+        return next();
+    }
+
+    return jsonBodyParser(req, res, (jsonError) => {
+        if (jsonError) return next(jsonError);
+        return urlencodedBodyParser(req, res, next);
+    });
+});
 
 // Email Config
 const transporter = nodemailer.createTransport({
