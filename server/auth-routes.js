@@ -163,7 +163,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
     function loginRedirectPath(user) {
         const role = String(user && user.role || '').toLowerCase();
         if (role === 'admin' || role === 'support') return '/admin?tab=overview';
-        if (role === 'owner') return '/owner';
+        if (role === 'owner') return '/';
         if (role === 'builder') return '/builder';
         if (role === 'broker') return '/broker';
         if (role === 'dealer') return '/dealer';

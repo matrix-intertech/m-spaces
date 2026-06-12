@@ -5,6 +5,7 @@ import { Building2, Crosshair, Home, Search, Store, Users } from "lucide-react";
 import { PlaceAutocomplete } from "@/components/search/PlaceAutocomplete";
 
 const tabs = [
+  { label: "All", listingType: "", type: "", icon: Search },
   { label: "Buy", listingType: "sale", type: "", icon: Home },
   { label: "Rent", listingType: "rent", type: "", icon: Building2 },
   { label: "Commercial", listingType: "", type: "office", icon: Store },
@@ -13,7 +14,7 @@ const tabs = [
 ];
 
 export function HomeSearchPanel() {
-  const [activeTab, setActiveTab] = useState(tabs[1]);
+  const [activeTab, setActiveTab] = useState(tabs[0]);
 
   function useNearMe() {
     if (!navigator.geolocation) return;
