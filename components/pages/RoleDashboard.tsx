@@ -899,7 +899,7 @@ export function RoleDashboard({ title, subtitle, user, payload, metrics, section
       if (!rawDate) return;
       const date = new Date(String(rawDate));
       if (Number.isNaN(date.getTime())) return;
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
       monthlyMap.set(key, (monthlyMap.get(key) ?? 0) + 1);
     });
     const monthlyTrend = Array.from(monthlyMap.entries())
@@ -916,7 +916,7 @@ export function RoleDashboard({ title, subtitle, user, payload, metrics, section
       if (!rawDate) return;
       const date = new Date(String(rawDate));
       if (Number.isNaN(date.getTime())) return;
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
       usersMonthlyMap.set(key, (usersMonthlyMap.get(key) ?? 0) + 1);
     });
     const usersMonthlyTrend = Array.from(usersMonthlyMap.entries())
