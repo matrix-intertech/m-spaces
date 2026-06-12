@@ -120,6 +120,14 @@ export interface RoleDashboardProps {
   forms?: DashboardForm[];
 }
 
+const STABLE_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function monthLabelFromParts(year: string, month: string) {
+  const monthIndex = Number(month) - 1;
+  const yearToken = year.slice(-2);
+  return `${STABLE_MONTH_LABELS[monthIndex] ?? month}-${yearToken}`;
+}
+
 function asArray(payload: DashboardRecord, key: string): DashboardRecord[] {
   const value = payload[key];
   return Array.isArray(value) ? value.filter((item): item is DashboardRecord => item !== null && typeof item === "object" && !Array.isArray(item)) : [];
@@ -899,7 +907,7 @@ export function RoleDashboard({ title, subtitle, user, payload, metrics, section
       .slice(-8)
       .map(([key, count]) => {
         const [year, month] = key.split("-");
-        const label = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+        const label = monthLabelFromParts(year, month);
         return { key, label, count };
       });
     const usersMonthlyMap = new Map<string, number>();
@@ -916,7 +924,7 @@ export function RoleDashboard({ title, subtitle, user, payload, metrics, section
       .slice(-8)
       .map(([key, count]) => {
         const [year, month] = key.split("-");
-        const label = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+        const label = monthLabelFromParts(year, month);
         return { key, label, count };
       });
 

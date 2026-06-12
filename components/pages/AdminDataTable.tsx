@@ -49,6 +49,15 @@ const ADMIN_ACTION_GROUP_STYLE: React.CSSProperties = {
   justifyContent: "flex-end"
 };
 const ADMIN_PAGE_SIZE = 25;
+const STABLE_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-IN", {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: true,
+  timeZone: "UTC"
+});
 
 function humanize(key: string): string {
   if (key === "id") return "User ID";
@@ -58,7 +67,7 @@ function humanize(key: string): string {
 function readValue(record: DashboardRecord, key: string): string {
   const value = record[key];
   if (value === null || value === undefined || value === "") return "-";
-  if (value instanceof Date) return value.toLocaleString();
+  if (value instanceof Date) return STABLE_DATE_TIME_FORMATTER.format(value);
   if (typeof value === "object") return Array.isArray(value) ? `${value.length} items` : "Available";
   return String(value);
 }
@@ -139,13 +148,19 @@ export function AdminDataTable({
       return;
     }
 
+    const trimmedQuery = query.trim();
+    if (currentPage === 1 && !trimmedQuery) {
+      setServerRows(items);
+      setServerPagination({ total: items.length, page: 1, totalPages: 1, limit: ADMIN_PAGE_SIZE });
+      return;
+    }
+
     const controller = new AbortController();
     const params = new URLSearchParams({
       ajax_active_listings: "1",
       page: String(currentPage),
       limit: String(ADMIN_PAGE_SIZE)
     });
-    const trimmedQuery = query.trim();
     if (trimmedQuery) params.set("search", trimmedQuery);
     const sortParam = adminSortParam(activeSort);
     if (sortParam) params.set("sort", sortParam);
@@ -329,7 +344,7 @@ export function AdminDataTable({
     if (!value) return "-";
     const d = new Date(String(value));
     if (Number.isNaN(d.getTime())) return "-";
-    return d.toLocaleString("en-IN");
+    return STABLE_DATE_TIME_FORMATTER.format(d);
   };
 
   const activeSortHeader = (label: string, key: string) => (

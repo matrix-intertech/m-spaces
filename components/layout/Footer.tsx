@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 export function Footer() {
-  const year = new Date().getFullYear();
+  const year = new Date().getUTCFullYear();
 
   return (
     <footer className="bg-slate-200 text-slate-600 py-4 pb-16 md:pb-4 mt-auto border-t border-slate-300">
