@@ -106,7 +106,8 @@ module.exports = function(upload, transporter) {
         const activeTab = String(req.query.tab || 'overview');
         const isOverviewTab = activeTab === 'overview';
         const needsActiveListings = Boolean(ajax_active_listings) || isOverviewTab;
-        const needsUsers = activeTab === 'users' || activeTab === 'permissions';
+        const needsPermissionData = can('manage_permissions');
+        const needsUsers = activeTab === 'users' || activeTab === 'permissions' || needsPermissionData;
         const needsTeam = activeTab === 'team';
         const needsVisits = activeTab === 'visits';
         const needsMessages = activeTab === 'messages';
@@ -392,14 +393,14 @@ module.exports = function(upload, transporter) {
         `) : { rows: [{}] };
         const referralStats = referralStatsRes.rows[0] || {};
 
-        // Fetch permissions for the UI (Gracefully fallback if tables don't exist yet)
-        const permsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM permissions ORDER BY id ASC").catch(() => ({ rows: [] })) : { rows: [] };
+        // Fetch permissions for the UI anywhere the admin quick-actions panel may render.
+        const permsRes = needsPermissionData ? await pool.query("SELECT * FROM permissions ORDER BY id ASC").catch(() => ({ rows: [] })) : { rows: [] };
         const allPermissions = permsRes.rows;
 
-        const rolePermsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM role_permissions").catch(() => ({ rows: [] })) : { rows: [] };
+        const rolePermsRes = needsPermissionData ? await pool.query("SELECT * FROM role_permissions").catch(() => ({ rows: [] })) : { rows: [] };
         const rolePermissions = rolePermsRes.rows;
 
-        const userPermsRes = can('manage_permissions') && activeTab === 'permissions' ? await pool.query("SELECT * FROM user_permissions").catch(() => ({ rows: [] })) : { rows: [] };
+        const userPermsRes = needsPermissionData ? await pool.query("SELECT * FROM user_permissions").catch(() => ({ rows: [] })) : { rows: [] };
         const userPermissions = userPermsRes.rows;
 
         let corporateClients = [];
