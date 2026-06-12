@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { cache } from "react";
 import { backendUrl, resolveAbsoluteUrl } from "@/lib/config";
 import type { PortfolioPayload } from "@/components/pages/PortfolioPage";
 import type { ApiEnvelope, ChatMessage, Conversation, Property, PropertyListResponse, User } from "@/types";
@@ -8,29 +9,35 @@ export type DashboardPayload = Record<string, unknown> & {
   user?: User | null;
 };
 
-async function forwardedCookieHeader(): Promise<string> {
+const requestContext = cache(async () => {
   const requestHeaders = await headers();
-  return requestHeaders.get("cookie") ?? "";
-}
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
+  const cookie = requestHeaders.get("cookie") ?? "";
 
-async function hasSessionCookie(): Promise<boolean> {
+  return { cookie, host, protocol };
+});
+
+const forwardedCookieHeader = cache(async (): Promise<string> => {
+  const { cookie } = await requestContext();
+  return cookie;
+});
+
+const hasSessionCookie = cache(async (): Promise<boolean> => {
   const cookie = await forwardedCookieHeader();
   return Boolean(cookie && cookie.includes("connect.sid="));
-}
+});
 
 export async function backendFetch<T>(
   path: string,
   init: RequestInit & { searchParams?: URLSearchParams } = {}
 ): Promise<T> {
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
+  const { cookie, host, protocol } = await requestContext();
   const url = new URL(resolveAbsoluteUrl(backendUrl(path), `${protocol}://${host}`));
   if (init.searchParams) {
     init.searchParams.forEach((value, key) => url.searchParams.set(key, value));
   }
 
-  const cookie = requestHeaders.get("cookie") ?? "";
   const response = await fetch(url, {
     ...init,
     cache: init.cache ?? "no-store",
@@ -48,7 +55,7 @@ export async function backendFetch<T>(
   return response.json() as Promise<T>;
 }
 
-export async function getCurrentUser(): Promise<User | null> {
+export const getCurrentUser = cache(async (): Promise<User | null> => {
   try {
     if (!(await hasSessionCookie())) {
       return null;
@@ -59,7 +66,7 @@ export async function getCurrentUser(): Promise<User | null> {
   } catch {
     return null;
   }
-}
+});
 
 export async function getCsrfToken(): Promise<string> {
   try {
@@ -70,8 +77,11 @@ export async function getCsrfToken(): Promise<string> {
   }
 }
 
-export async function getProperties(searchParams?: URLSearchParams): Promise<PropertyListResponse> {
-  return backendFetch<PropertyListResponse>("/api/properties", { searchParams });
+export async function getProperties(
+  searchParams?: URLSearchParams,
+  init: RequestInit & { searchParams?: URLSearchParams } = {}
+): Promise<PropertyListResponse> {
+  return backendFetch<PropertyListResponse>("/api/properties", { ...init, searchParams });
 }
 
 export async function getUserPropertyCollection(path: "/recommended" | "/favorites" | "/recently-viewed"): Promise<Property[]> {
@@ -96,9 +106,9 @@ export async function getCompareProperties(): Promise<Property[]> {
   }
 }
 
-export async function getPartners(): Promise<Array<Record<string, unknown>>> {
+export async function getPartners(init: RequestInit = {}): Promise<Array<Record<string, unknown>>> {
   try {
-    const payload = await backendFetch<{ partners: Array<Record<string, unknown>> }>("/partners");
+    const payload = await backendFetch<{ partners: Array<Record<string, unknown>> }>("/partners", init);
     return payload.partners ?? [];
   } catch {
     return [];

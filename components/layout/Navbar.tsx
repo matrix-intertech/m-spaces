@@ -163,8 +163,10 @@ export function Navbar({
   useEffect(() => {
     if (!user) return;
     const controller = new AbortController();
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+    let idleId: number | null = null;
 
-    void (async () => {
+    const loadHeaderState = async () => {
       try {
         const [notificationsResponse, conversationsResponse] = await Promise.all([
           fetch(backendUrl("/notifications"), {
@@ -213,9 +215,30 @@ export function Navbar({
       } catch {
         // Keep initial shell values if the summary request fails.
       }
-    })();
+    };
 
-    return () => controller.abort();
+    const scheduleRefresh = () => {
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        idleId = window.requestIdleCallback(() => {
+          void loadHeaderState();
+        }, { timeout: 2500 });
+        return;
+      }
+
+      timeoutId = globalThis.setTimeout(() => {
+        void loadHeaderState();
+      }, 1200);
+    };
+
+    scheduleRefresh();
+
+    return () => {
+      controller.abort();
+      if (timeoutId) globalThis.clearTimeout(timeoutId);
+      if (idleId !== null && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(idleId);
+      }
+    };
   }, [user]);
 
   function closeMobileMenu() {

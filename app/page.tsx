@@ -19,7 +19,10 @@ type HomeMode = "for-you" | "discover" | "market-trends";
 
 async function fetchHomeSet(params: Record<string, string>) {
   const search = new URLSearchParams(params);
-  return getProperties(search).catch(() => ({ properties: [] as Property[] }));
+  return getProperties(search, {
+    cache: "force-cache",
+    next: { revalidate: 180 }
+  }).catch(() => ({ properties: [] as Property[] }));
 }
 
 function mergeProperties(...sets: Property[][]) {
@@ -77,7 +80,7 @@ export default async function HomePage({
     fetchHomeSet({ limit: "8" }),
     fetchHomeSet({ limit: "8", listingType: "sale" }),
     fetchHomeSet({ limit: "8", verifiedOnly: "true" }),
-    getPartners(),
+    getPartners({ cache: "force-cache", next: { revalidate: 300 } }),
     getCurrentUser(),
     getFollowedPartnerIds()
   ]);
