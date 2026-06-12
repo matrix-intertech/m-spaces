@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { backendUrl, resolveAbsoluteUrl } from "@/lib/config";
 
-export async function POST() {
+async function handleLogout() {
   const requestHeaders = await headers();
   const cookie = requestHeaders.get("cookie") ?? "";
   const origin = requestHeaders.get("origin")
@@ -22,4 +22,12 @@ export async function POST() {
   const response = NextResponse.redirect(new URL("/", origin));
   response.cookies.set("connect.sid", "", { path: "/", maxAge: 0 });
   return response;
+}
+
+export async function GET() {
+  return handleLogout();
+}
+
+export async function POST() {
+  return handleLogout();
 }
