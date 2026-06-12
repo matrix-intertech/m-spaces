@@ -15,12 +15,6 @@ export function HomeRightRail({
 }) {
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
-      <style>{`
-        .ms-map-preview .leaflet-control-container,
-        .ms-map-preview .leaflet-popup-pane {
-          display: none !important;
-        }
-      `}</style>
       <section className="ms-home-panel" style={{ padding: ".9rem" }}>
         <h3 style={{ margin: "0 0 .7rem", fontSize: "1.28rem" }}>Trending Searches</h3>
         <div style={{ display: "flex", flexWrap: "wrap", gap: ".45rem" }}>
