@@ -51,12 +51,7 @@ export function HomeRightRail({
             height: "100%"
           }}
         >
-          <div style={{ pointerEvents: "none" }}>
-            <PropertyMapIsland properties={properties} height={360} showSearchControl={false} />
-          </div>
-          <div style={{ position: "absolute", inset: "auto .55rem .55rem auto", borderRadius: 999, background: "rgba(2,6,23,.74)", color: "white", padding: ".25rem .55rem", fontSize: ".75rem", fontWeight: 800 }}>
-            Cropped Map
-          </div>
+          <PropertyMapIsland properties={properties} height={360} showSearchControl />
         </div>
       </section>
     </div>
