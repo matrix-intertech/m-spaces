@@ -501,8 +501,13 @@ const auth0Config = hasAuth0RuntimeConfig ? {
 const requestedSessionStore = String(process.env.SESSION_STORE || '').trim().toLowerCase();
 const wantsRedisSessionStore = requestedSessionStore === 'redis';
 const wantsPostgresSessionStore = requestedSessionStore === 'postgres';
+const wantsMemorySessionStore = requestedSessionStore === 'memory';
 const isServerlessRuntime = isVercelRuntime || isEmbeddedBackend;
-const usePostgresSessionStore = wantsPostgresSessionStore || (!wantsRedisSessionStore && !isServerlessRuntime && process.env.NODE_ENV === 'production');
+const hasDatabaseUrl = Boolean(String(process.env.DATABASE_URL || '').trim());
+const usePostgresSessionStore = !wantsMemorySessionStore && (
+    wantsPostgresSessionStore ||
+    (!wantsRedisSessionStore && process.env.NODE_ENV === 'production' && hasDatabaseUrl)
+);
 const sessionStore = wantsRedisSessionStore
     ? new RedisSessionStore({
         client: redisClient,
@@ -538,7 +543,7 @@ if (wantsRedisSessionStore) {
 } else if (hasRedisConfig) {
     console.warn('Redis cache configured, but session store remains unchanged because SESSION_STORE is not set to redis.');
 } else if (isServerlessRuntime) {
-    console.warn('Using in-memory session store for embedded/serverless runtime. Set SESSION_STORE=redis or SESSION_STORE=postgres to override.');
+    console.warn('Using in-memory session store for embedded/serverless runtime. This will not persist login across Vercel function invocations. Set SESSION_STORE=postgres or SESSION_STORE=redis to persist sessions.');
 } else {
     console.warn('Using in-memory session store for local development.');
 }
