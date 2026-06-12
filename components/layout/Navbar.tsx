@@ -48,7 +48,9 @@ function dashboardPath(role?: string | null) {
   if (role === "admin" || role === "support") return "/admin?tab=overview";
   if (role === "owner") return "/owner";
   if (role === "builder") return "/builder";
-  if (role === "broker" || role === "agent" || role === "dealer") return "/broker";
+  if (role === "broker") return "/broker";
+  if (role === "dealer") return "/dealer";
+  if (role === "agent") return "/agent";
   if (role === "external_sales") return "/sales";
   if (role === "corporate" || role === "corporate_user") return "/corporate";
   return "/profile";
@@ -59,7 +61,8 @@ function dashboardLabel(role?: string | null) {
   if (role === "owner") return "My Properties";
   if (role === "builder") return "Builder Dashboard";
   if (role === "broker") return "Broker Dashboard";
-  if (role === "agent" || role === "dealer") return "Management Dashboard";
+  if (role === "dealer") return "Dealer Dashboard";
+  if (role === "agent") return "Agent Dashboard";
   if (role === "external_sales") return "Sales Dashboard";
   if (role === "corporate" || role === "corporate_user") return "Corporate Dashboard";
   return "My Properties";

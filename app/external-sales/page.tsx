@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { renderDashboardPage } from "@/lib/dashboardPage";
 
 export const metadata: Metadata = {
   title: "External Sales Dashboard"
 };
 
 export default async function ExternalSalesDashboardPage() {
-  redirect("/sales");
+  return renderDashboardPage("sales");
 }

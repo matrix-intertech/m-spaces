@@ -165,7 +165,9 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         if (role === 'admin' || role === 'support') return '/admin?tab=overview';
         if (role === 'owner') return '/owner';
         if (role === 'builder') return '/builder';
-        if (role === 'broker' || role === 'dealer' || role === 'agent') return '/broker';
+        if (role === 'broker') return '/broker';
+        if (role === 'dealer') return '/dealer';
+        if (role === 'agent') return '/agent';
         if (role === 'external_sales') return '/sales';
         if (role === 'corporate' || role === 'corporate_user') return '/corporate';
         return '/';
@@ -964,7 +966,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
 
     router.get('/login', (req, res) => {
         if (req.session.user) {
-            return res.redirect('/');
+            return res.redirect(loginRedirectPath(req.session.user));
         }
         let message = null;
         if (req.query.logout === 'success') message = 'You have been logged out successfully.';

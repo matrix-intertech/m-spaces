@@ -84,8 +84,21 @@ export default async function HomePage({
     getCurrentUser(),
     getFollowedPartnerIds()
   ]);
-  if (["admin", "support"].includes(String(currentUser?.role ?? "").toLowerCase())) {
+  const role = String(currentUser?.role ?? "").toLowerCase();
+  if (role === "admin" || role === "support") {
     redirect("/admin?tab=overview");
+  }
+  if (role === "broker") {
+    redirect("/broker");
+  }
+  if (role === "dealer") {
+    redirect("/dealer");
+  }
+  if (role === "agent") {
+    redirect("/agent");
+  }
+  if (role === "external_sales") {
+    redirect("/sales");
   }
 
   const baseFeed = mergeProperties(featured.properties, sale.properties, newlyAdded.properties);
