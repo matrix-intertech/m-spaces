@@ -43,7 +43,7 @@ export const viewport: Viewport = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   const role = String(user?.role ?? "").toLowerCase();
-  const hidePublicChrome = ["admin", "support", "broker", "dealer", "agent", "external_sales"].includes(role);
+  const hidePublicChrome = ["admin", "support", "builder", "broker", "dealer", "agent", "external_sales"].includes(role);
 
   return (
     <html lang="en" data-scroll-behavior="smooth" data-theme="light">
