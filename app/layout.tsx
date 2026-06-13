@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/services/api";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Footer } from "@/components/layout/Footer";
 import { Navbar } from "@/components/layout/Navbar";
+import { getMetadataBase, getSiteUrl } from "@/lib/site-url";
 import "leaflet/dist/leaflet.css";
 import "./globals.css";
 
@@ -15,16 +16,19 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://matrixspaces.com"),
+  metadataBase: getMetadataBase(),
   title: {
     default: "MatrixSpaces | Commercial Real Estate Discovery",
     template: "%s | MatrixSpaces"
   },
   description: "Discover, compare, manage, and communicate around verified commercial real estate spaces.",
+  alternates: {
+    canonical: "/"
+  },
   openGraph: {
     title: "MatrixSpaces",
     description: "Modern real-estate discovery and management platform.",
-    url: "https://matrixspaces.com",
+    url: getSiteUrl(),
     siteName: "MatrixSpaces",
     images: [{ url: "/assets/logo.png", width: 512, height: 512 }]
   },

@@ -40,17 +40,26 @@ export default function ReportPage() {
           <h2 className="text-xl font-black text-slate-950" style={{ margin: 0 }}>Submit Report</h2>
           <form action={`${backendBaseUrl}/report`} method="POST" style={{ display: "grid", gap: ".75rem" }}>
             <div className="grid gap-3 md:grid-cols-2">
-              <input className="field" name="reported_username" placeholder="Reported username (optional)" />
-              <select className="field" name="reason" defaultValue="" required>
-                <option value="" disabled>Select issue type</option>
-                {issueTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Reported username
+                <input className="field" name="reported_username" placeholder="Reported username (optional)" autoComplete="username" />
+              </label>
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Issue type
+                <select className="field" name="reason" defaultValue="" required>
+                  <option value="" disabled>Select issue type</option>
+                  {issueTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <textarea className="field" name="description" placeholder="Describe what happened, where, and any useful details..." rows={7} required />
+            <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+              Issue description
+              <textarea className="field" name="description" placeholder="Describe what happened, where, and any useful details..." rows={7} required />
+            </label>
             <button type="submit" className="btn btn-primary" style={{ width: "fit-content" }}>
               Submit Report
             </button>

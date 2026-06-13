@@ -4,7 +4,11 @@ import { getProperties, getUserPropertyCollection } from "@/services/api";
 import { toUrlSearchParams, type SearchParamsInput } from "@/utils/searchParams";
 
 export const metadata: Metadata = {
-  title: "Search Properties"
+  title: "Search Commercial Properties",
+  description: "Compare verified commercial property listings by locality, budget, property type, and availability on MatrixSpaces.",
+  alternates: {
+    canonical: "/search"
+  }
 };
 
 export default async function SearchPage({ searchParams }: { searchParams: Promise<SearchParamsInput> }) {

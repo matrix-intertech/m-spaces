@@ -19,12 +19,16 @@ function queryObject(searchParams: URLSearchParams): Record<string, string | str
 }
 
 export async function GET(request: Request) {
+  const requestId = request.headers.get("x-request-id") ?? undefined;
   try {
     const params = queryObject(new URL(request.url).searchParams);
     const payload = await fetchProperties(params);
     return NextResponse.json(payload);
   } catch (error) {
-    console.error("Native property list fetch error:", error);
-    return NextResponse.json({ error: "Failed to fetch properties" }, { status: 500 });
+    console.error("Native property list fetch error:", { requestId, error });
+    return NextResponse.json(
+      { success: false, error: "Failed to fetch properties", requestId },
+      { status: 500 }
+    );
   }
 }

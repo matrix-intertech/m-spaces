@@ -18,7 +18,11 @@ export default function Login2FAPage() {
           <p style={{ margin: 0, color: "#64748b", fontSize: ".9rem" }}>Enter the 6-digit code from your app or a recovery code.</p>
         </div>
         <form action={`${backendBaseUrl}/login/2fa`} method="post" style={{ display: "grid", gap: "1.25rem" }}>
-          <input name="token" inputMode="numeric" autoComplete="one-time-code" placeholder="Code" autoFocus required style={{ width: "100%", border: "1px solid #cbd5e1", borderRadius: 12, padding: "1rem", textAlign: "center", fontFamily: "monospace", fontSize: "1.5rem", letterSpacing: ".18em", outline: "none" }} />
+          <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+            Authentication code
+            <input name="token" inputMode="numeric" autoComplete="one-time-code" placeholder="Code" aria-describedby="two-factor-help" autoFocus required style={{ width: "100%", border: "1px solid #cbd5e1", borderRadius: 12, padding: "1rem", textAlign: "center", fontFamily: "monospace", fontSize: "1.5rem", letterSpacing: ".18em", outline: "none" }} />
+          </label>
+          <p id="two-factor-help" className="text-xs font-semibold text-slate-500">Enter the current code from your authenticator app.</p>
           <button type="submit" style={{ border: 0, borderRadius: 12, background: "#0f172a", color: "white", cursor: "pointer", fontWeight: 800, padding: ".85rem", boxShadow: "0 12px 30px rgba(15,23,42,.14)" }}>
             Verify Login
           </button>

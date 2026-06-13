@@ -4,7 +4,11 @@ import { OwnerDashboard } from "@/components/pages/OwnerDashboard";
 import { getCurrentUser, getOwnerDashboard } from "@/services/api";
 
 export const metadata: Metadata = {
-  title: "Owner Dashboard"
+  title: "Owner Dashboard",
+  robots: {
+    index: false,
+    follow: false
+  }
 };
 
 export default async function OwnerDashboardPage() {

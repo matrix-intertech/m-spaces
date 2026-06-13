@@ -3,7 +3,11 @@ import { PartnerSignupForm } from "@/components/auth/PartnerSignupForm";
 import { getCurrentUser } from "@/services/api";
 
 export const metadata: Metadata = {
-  title: "Partner Signup"
+  title: "Partner Signup",
+  description: "Apply to join MatrixSpaces as a builder, broker, dealer, agent, or sales partner.",
+  alternates: {
+    canonical: "/partner-signup"
+  }
 };
 
 type PartnerRole = "builder" | "broker" | "external_sales";

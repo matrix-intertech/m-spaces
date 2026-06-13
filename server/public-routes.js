@@ -3,6 +3,26 @@ const pool = require('./db');
 const { fetchWithCache } = require('./redis-cache');
 const { success, error } = require('./responseHandler');
 const { sanitizeUserForClient } = require('./profile-utils');
+const {
+    fetchPartners,
+    fetchProperties,
+    fetchPropertyById,
+    publicPropertySelect,
+    serializePublicProperty
+} = require('./public-data');
+
+function getPublicSiteUrl() {
+    const configuredUrl = String(
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.PUBLIC_APP_ORIGIN ||
+        process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+        process.env.VERCEL_URL ||
+        'https://m-spaces.vercel.app'
+    ).trim();
+    const normalizedUrl = configuredUrl.startsWith('http') ? configuredUrl : `https://${configuredUrl}`;
+    return normalizedUrl.replace(/\/+$/, '');
+}
 
 function getS3BaseUrl() {
     if (process.env.AWS_S3_BUCKET_NAME && process.env.AWS_REGION) {
@@ -67,7 +87,7 @@ function buildPropertyQuery(reqQuery) {
 
     let queryParams = [];
         
-    let selectClause = "SELECT *";
+    let selectClause = `SELECT ${publicPropertySelect()}`;
     let fromClause = "FROM properties";
     let whereClauses = ["status = 'listed'"];
 
@@ -153,15 +173,15 @@ module.exports = function() {
 
     // SEO & PWA Standard Routes
     router.get('/sitemap.xml', (req, res) => {
+        const siteUrl = getPublicSiteUrl();
         res.header('Content-Type', 'application/xml');
         res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-    <url><loc>https://matrixspaces.com/</loc></url>
-    <url><loc>https://matrixspaces.com/commercial-real-estate-india</loc></url>
-    <url><loc>https://matrixspaces.com/search</loc></url>
-    <url><loc>https://matrixspaces.com/premium-properties</loc></url>
-    <url><loc>https://matrixspaces.com/sale-properties</loc></url>
-    <url><loc>https://matrixspaces.com/partners</loc></url>
+    <url><loc>${siteUrl}/</loc></url>
+    <url><loc>${siteUrl}/commercial-real-estate-india</loc></url>
+    <url><loc>${siteUrl}/search</loc></url>
+    <url><loc>${siteUrl}/property</loc></url>
+    <url><loc>${siteUrl}/partners</loc></url>
 </urlset>`);
     });
 
@@ -185,64 +205,15 @@ module.exports = function() {
 
     router.get('/partners', async (req, res) => {
         try {
-            const partnersRes = await pool.query(
-                `SELECT
-                    u.id,
-                    u.name,
-                    u.username,
-                    u.role,
-                    u.email,
-                    u.phone,
-                    u.avatar_url,
-                    u.cover_url,
-                    u.company_logo,
-                    u.city,
-                    u.locality,
-                    COALESCE(
-                        json_agg(partner_properties.*) FILTER (WHERE partner_properties.id IS NOT NULL),
-                        '[]'::json
-                    ) AS properties
-                FROM users u
-                LEFT JOIN LATERAL (
-                    SELECT
-                        p.id,
-                        p.title,
-                        p.type,
-                        p.locality,
-                        NULL::text AS city,
-                        NULL::text AS address,
-                        p.final_price,
-                        NULL::numeric AS price,
-                        NULL::numeric AS rent,
-                        p.size,
-                        p.photos,
-                        NULL::text AS photo,
-                        NULL::text AS image_url,
-                        p.listing_type,
-                        p.status,
-                        p.is_matrix_verified
-                    FROM properties p
-                    WHERE p.status IN ('listed', 'verified')
-                      AND (
-                        p.owner_id = u.id
-                        OR p.assigned_broker_id = u.id
-                        OR u.id = ANY(COALESCE(p.assigned_brokers, '{}'::integer[]))
-                      )
-                    ORDER BY COALESCE(p.listed_at, p.created_at) DESC NULLS LAST, p.id DESC
-                    LIMIT 5
-                ) partner_properties ON TRUE
-                WHERE u.role IN ('builder', 'broker', 'dealer', 'agent', 'external_sales')
-                  AND u.is_active = TRUE
-                GROUP BY u.id
-                ORDER BY u.username`
-            );
+            const partners = await fetchPartners();
             if (req.headers.accept && req.headers.accept.includes('application/json')) {
-                return res.json({ partners: partnersRes.rows });
+                return res.json({ partners });
             }
-            res.render('partners', { 
-                partners: partnersRes.rows, 
-                user: req.session.user || null 
+            return res.render('partners', {
+                partners,
+                user: req.session.user || null
             });
+
         } catch (err) {
             console.error("Error fetching partners:", err);
             res.status(500).send("Server Error");
@@ -267,9 +238,9 @@ module.exports = function() {
             properties = (await pool.query(query, queryParams)).rows;
         }
 
-        const saleProperties = await fetchWithCache('public_sale_properties', 300, async () => (await pool.query("SELECT * FROM properties WHERE status = 'listed' AND listing_type = 'sale' ORDER BY listed_at DESC LIMIT 10")).rows);
+        const saleProperties = await fetchWithCache('public_sale_properties', 300, async () => (await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE status = 'listed' AND listing_type = 'sale' ORDER BY listed_at DESC LIMIT 10`)).rows.map(serializePublicProperty));
 
-        const newlyAddedProperties = await fetchWithCache('public_new_properties', 300, async () => (await pool.query("SELECT * FROM properties WHERE status = 'listed' AND is_matrix_verified = TRUE ORDER BY listed_at DESC LIMIT 10")).rows);
+        const newlyAddedProperties = await fetchWithCache('public_new_properties', 300, async () => (await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE status = 'listed' AND is_matrix_verified = TRUE ORDER BY listed_at DESC LIMIT 10`)).rows.map(serializePublicProperty));
 
         let recommendedProperties = [];
         let recentlyViewedProperties = [];
@@ -282,27 +253,27 @@ module.exports = function() {
                 if (recentView.rows.length > 0) {
                     const { id, type, locality } = recentView.rows[0];
                     const recRes = await pool.query(
-                        "SELECT * FROM properties WHERE status = 'listed' AND id != $1 AND (type = $2 OR locality = $3) ORDER BY RANDOM() LIMIT 10",
+                        `SELECT ${publicPropertySelect()} FROM properties WHERE status = 'listed' AND id != $1 AND (type = $2 OR locality = $3) ORDER BY RANDOM() LIMIT 10`,
                         [id, type, locality]
                     );
-                    recommendedProperties = recRes.rows;
+                    recommendedProperties = recRes.rows.map(serializePublicProperty);
                 } else if (req.session.user.saved_filters) {
                     const filters = JSON.parse(req.session.user.saved_filters);
                     if (filters.type || filters.locality) {
-                        let recQuery = "SELECT * FROM properties WHERE status = 'listed'";
+                        let recQuery = `SELECT ${publicPropertySelect()} FROM properties WHERE status = 'listed'`;
                         let params = [];
                         if (filters.type) { params.push(filters.type); recQuery += ` AND type = $${params.length}`; }
                         if (filters.locality) { params.push(`%${filters.locality}%`); recQuery += ` AND locality ILIKE $${params.length}`; }
                         recQuery += " ORDER BY RANDOM() LIMIT 10";
                         const recRes2 = await pool.query(recQuery, params);
-                        recommendedProperties = recRes2.rows;
+                        recommendedProperties = recRes2.rows.map(serializePublicProperty);
                     }
                 }
                 const rvRes = await pool.query(
-                    `SELECT p.* FROM properties p JOIN recently_viewed rv ON p.id = rv.property_id WHERE rv.user_id = $1 ORDER BY rv.viewed_at DESC LIMIT 10`,
+                    `SELECT ${publicPropertySelect('p')} FROM properties p JOIN recently_viewed rv ON p.id = rv.property_id WHERE rv.user_id = $1 ORDER BY rv.viewed_at DESC LIMIT 10`,
                     [req.session.user.id]
                 );
-                recentlyViewedProperties = rvRes.rows;
+                recentlyViewedProperties = rvRes.rows.map(serializePublicProperty);
             } catch (e) { console.error("Recommendation error:", e); }
         }
 
@@ -382,7 +353,7 @@ module.exports = function() {
             const { search } = req.query;
             let query = `
                 SELECT cr.id, cr.cities, cr.locality, cr.property_type, cr.requirement_type, cr.description, cr.min_size, cr.budget, cr.created_at, 
-                       u.username as contact_name, u.email as contact_email, u.phone as contact_phone, u.agency_name
+                       u.username as contact_name, u.agency_name
                 FROM corporate_requirements cr
                 JOIN users u ON cr.corporate_id = u.id
                 WHERE cr.status = 'active'
@@ -416,22 +387,7 @@ module.exports = function() {
     // API version of properties for the enhanced frontend
     router.get('/api/properties', async (req, res) => {
         try {
-            const limit = parseInt(req.query.limit) || 12;
-            const page = parseInt(req.query.page) || 1;
-            req.query.limit = limit;
-
-            const { query, queryParams, countQuery, countQueryParams } = buildPropertyQuery(req.query);
-            const cacheKey = buildPropertySearchCacheKey('api_properties', req.query);
-            const payload = await fetchWithCache(cacheKey, 90, async () => {
-                const [propertiesResult, countResult] = await Promise.all([
-                    pool.query(query, queryParams),
-                    pool.query(countQuery, countQueryParams)
-                ]);
-                const properties = propertiesResult.rows;
-                const total = parseInt(countResult.rows[0].total, 10);
-                const totalPages = Math.ceil(total / limit);
-                return { properties, pagination: { total, page, totalPages, limit } };
-            });
+            const payload = await fetchProperties(req.query);
 
             return res.json(payload);
         } catch (err) {
@@ -443,9 +399,9 @@ module.exports = function() {
     router.get('/api/properties/:id', async (req, res) => {
         try {
             const { id } = req.params;
-            const result = await pool.query("SELECT * FROM properties WHERE id = $1", [id]);
-            if (result.rows.length === 0) return error(res, 'Property not found', 'NOT_FOUND', 404);
-            return success(res, result.rows[0]);
+            const property = await fetchPropertyById(id);
+            if (!property) return error(res, 'Property not found', 'NOT_FOUND', 404);
+            return success(res, property);
         } catch (err) {
             return error(res, 'Failed to fetch property details', 'DB_ERROR', 500);
         }
@@ -462,8 +418,8 @@ module.exports = function() {
     router.get('/api/favorites', async (req, res) => {
         if (!req.session.user) return error(res, "Unauthorized", "UNAUTHORIZED", 401);
         try {
-            const favRes = await pool.query('SELECT p.* FROM properties p JOIN favorites f ON p.id = f.property_id WHERE f.user_id = $1', [req.session.user.id]);
-            return success(res, { favorites: favRes.rows });
+            const favRes = await pool.query(`SELECT ${publicPropertySelect('p')} FROM properties p JOIN favorites f ON p.id = f.property_id WHERE f.user_id = $1`, [req.session.user.id]);
+            return success(res, { favorites: favRes.rows.map(serializePublicProperty) });
         } catch (err) {
             return error(res, 'Failed to fetch favorites', 'DB_ERROR', 500);
         }
@@ -557,9 +513,10 @@ module.exports = function() {
             if (req.headers.accept && req.headers.accept.includes('application/json')) return res.json({ properties: [] });
             return res.render('compare', { properties: [] });
         }
-        const result = await pool.query('SELECT * FROM properties WHERE id = ANY($1::int[])', [list]);
-        if (req.headers.accept && req.headers.accept.includes('application/json')) return res.json({ properties: result.rows });
-        res.render('compare', { properties: result.rows });
+        const result = await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE id = ANY($1::int[])`, [list]);
+        const properties = result.rows.map(serializePublicProperty);
+        if (req.headers.accept && req.headers.accept.includes('application/json')) return res.json({ properties });
+        res.render('compare', { properties });
     });
 
     router.get('/api/partner-follows', async (req, res) => {
@@ -653,7 +610,7 @@ module.exports = function() {
         try {
             const userRes = await pool.query(`
                 SELECT
-                    u.id, u.username, u.role, u.email, u.phone, u.avatar_url, u.cover_url, u.about,
+                    u.id, u.username, u.role, u.avatar_url, u.cover_url, u.about,
                     u.facebook, u.linkedin, u.instagram, u.city, u.locality, u.agency_name,
                     u.google_business_link, u.company_website, u.rera_number,
                     parent.username AS parent_username,
@@ -673,8 +630,8 @@ module.exports = function() {
             };
             let properties = [];
             if (agent.role !== 'builder') {
-                const propsRes = await pool.query("SELECT * FROM properties WHERE status IN ('listed', 'verified') AND (assigned_broker_id = $1 OR owner_id = $1) ORDER BY listed_at DESC", [agent.id]);
-                properties = propsRes.rows;
+                const propsRes = await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE status IN ('listed', 'verified') AND (assigned_broker_id = $1 OR owner_id = $1) ORDER BY listed_at DESC`, [agent.id]);
+                properties = propsRes.rows.map(serializePublicProperty);
             }
 
             let projects = [];
@@ -712,7 +669,7 @@ module.exports = function() {
         try {
             const userRes = await pool.query(`
                 SELECT
-                    u.id, u.username, u.role, u.email, u.phone, u.avatar_url, u.cover_url, u.about,
+                    u.id, u.username, u.role, u.avatar_url, u.cover_url, u.about,
                     u.facebook, u.linkedin, u.instagram, u.city, u.locality, u.agency_name,
                     u.google_business_link, u.company_website, u.rera_number,
                     parent.username AS parent_username,
@@ -733,8 +690,8 @@ module.exports = function() {
             // Fetch properties managed OR owned by this specific agent
             let properties = [];
             if (agent.role !== 'builder') {
-                const propsRes = await pool.query("SELECT * FROM properties WHERE status IN ('listed', 'verified') AND (assigned_broker_id = $1 OR owner_id = $1) ORDER BY listed_at DESC", [agent.id]);
-                properties = propsRes.rows;
+                const propsRes = await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE status IN ('listed', 'verified') AND (assigned_broker_id = $1 OR owner_id = $1) ORDER BY listed_at DESC`, [agent.id]);
+                properties = propsRes.rows.map(serializePublicProperty);
             }
             
             let projects = [];

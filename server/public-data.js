@@ -6,6 +6,113 @@ const { fetchWithCache } = require('./redis-cache');
 let envLoaded = false;
 let pool = null;
 
+const PUBLIC_PROPERTY_COLUMNS = [
+    'id',
+    'title',
+    'type',
+    'condition',
+    'listing_type',
+    'locality',
+    'final_price',
+    'size',
+    'photos',
+    'latitude',
+    'longitude',
+    'is_matrix_verified',
+    'status',
+    'listed_at',
+    'created_at',
+    'verification_status',
+    'ownership_type'
+];
+
+function publicPropertySelect(prefix = '') {
+    const qualifier = prefix ? `${prefix}.` : '';
+    return [
+        ...PUBLIC_PROPERTY_COLUMNS.map((column) => `${qualifier}${column}`),
+        'NULL::text AS city',
+        'NULL::text AS address',
+        'NULL::numeric AS price',
+        'NULL::numeric AS rent',
+        'NULL::text AS photo',
+        'NULL::text AS image_url',
+        'NULL::text AS description',
+        'NULL::text[] AS amenities',
+        'NULL::text AS facing',
+        'NULL::text AS configuration',
+        'NULL::text AS floor_number',
+        'NULL::text AS total_floors',
+        'NULL::text AS overlooking',
+        'NULL::text AS property_age',
+        'NULL::timestamp AS updated_at',
+        'NULL::text AS project_name',
+        'NULL::text AS possession_status',
+        'NULL::text AS video_url'
+    ].join(', ');
+}
+
+function serializePublicProperty(property) {
+    if (!property || typeof property !== 'object') return property;
+    return {
+        id: property.id,
+        title: property.title,
+        type: property.type,
+        condition: property.condition,
+        listing_type: property.listing_type,
+        locality: property.locality,
+        city: property.city ?? null,
+        address: property.address ?? null,
+        final_price: property.final_price,
+        price: property.price ?? null,
+        rent: property.rent ?? null,
+        size: property.size,
+        photos: property.photos,
+        photo: property.photo ?? null,
+        image_url: property.image_url ?? null,
+        latitude: property.latitude,
+        longitude: property.longitude,
+        is_matrix_verified: property.is_matrix_verified,
+        status: property.status,
+        description: property.description ?? null,
+        amenities: property.amenities ?? null,
+        facing: property.facing ?? null,
+        configuration: property.configuration ?? null,
+        floor_number: property.floor_number ?? null,
+        total_floors: property.total_floors ?? null,
+        overlooking: property.overlooking ?? null,
+        property_age: property.property_age ?? null,
+        ownership_type: property.ownership_type ?? null,
+        listed_at: property.listed_at,
+        created_at: property.created_at,
+        updated_at: property.updated_at ?? null,
+        verification_status: property.verification_status,
+        project_name: property.project_name ?? null,
+        possession_status: property.possession_status ?? null,
+        video_url: property.video_url ?? null,
+        distance: property.distance
+    };
+}
+
+function serializePublicPartner(partner) {
+    if (!partner || typeof partner !== 'object') return partner;
+    return {
+        id: partner.id,
+        name: partner.name,
+        username: partner.username,
+        role: partner.role,
+        avatar_url: normalizePortfolioMediaUrl(partner.avatar_url),
+        cover_url: normalizePortfolioMediaUrl(partner.cover_url),
+        company_logo: normalizePortfolioMediaUrl(partner.company_logo),
+        city: partner.city,
+        locality: partner.locality,
+        agency_name: partner.agency_name,
+        about: partner.about,
+        properties: Array.isArray(partner.properties)
+            ? partner.properties.map(serializePublicProperty)
+            : []
+    };
+}
+
 function loadNativeRouteEnv() {
     if (envLoaded) return;
     envLoaded = true;
@@ -117,7 +224,7 @@ function buildPropertyQuery(reqQuery) {
     const limit = extractStr(reqQuery.limit);
 
     const queryParams = [];
-    let selectClause = 'SELECT *';
+    let selectClause = `SELECT ${publicPropertySelect()}`;
     const fromClause = 'FROM properties';
     const whereClauses = ["status = 'listed'"];
 
@@ -219,7 +326,7 @@ async function fetchProperties(reqQuery) {
             pool.query(query, queryParams),
             pool.query(countQuery, countQueryParams)
         ]);
-        const properties = propertiesResult.rows;
+        const properties = propertiesResult.rows.map(serializePublicProperty);
         const total = parseInt(countResult.rows[0].total, 10);
         const totalPages = Math.ceil(total / limit);
         return { properties, pagination: { total, page, totalPages, limit } };
@@ -228,8 +335,8 @@ async function fetchProperties(reqQuery) {
 
 async function fetchPropertyById(id) {
     const pool = getPool();
-    const result = await pool.query('SELECT * FROM properties WHERE id = $1', [id]);
-    return result.rows[0] || null;
+    const result = await pool.query(`SELECT ${publicPropertySelect()} FROM properties WHERE id = $1 AND status = 'listed'`, [id]);
+    return result.rows[0] ? serializePublicProperty(result.rows[0]) : null;
 }
 
 async function fetchPartners() {
@@ -240,13 +347,13 @@ async function fetchPartners() {
             u.name,
             u.username,
             u.role,
-            u.email,
-            u.phone,
             u.avatar_url,
             u.cover_url,
             u.company_logo,
             u.city,
             u.locality,
+            u.agency_name,
+            u.about,
             COALESCE(
                 json_agg(partner_properties.*) FILTER (WHERE partner_properties.id IS NOT NULL),
                 '[]'::json
@@ -254,22 +361,7 @@ async function fetchPartners() {
         FROM users u
         LEFT JOIN LATERAL (
             SELECT
-                p.id,
-                p.title,
-                p.type,
-                p.locality,
-                NULL::text AS city,
-                NULL::text AS address,
-                p.final_price,
-                NULL::numeric AS price,
-                NULL::numeric AS rent,
-                p.size,
-                p.photos,
-                NULL::text AS photo,
-                NULL::text AS image_url,
-                p.listing_type,
-                p.status,
-                p.is_matrix_verified
+                ${publicPropertySelect('p')}
             FROM properties p
             WHERE p.status IN ('listed', 'verified')
               AND (
@@ -286,12 +378,7 @@ async function fetchPartners() {
         ORDER BY u.username`
     );
 
-    return partnersRes.rows.map((partner) => ({
-        ...partner,
-        avatar_url: normalizePortfolioMediaUrl(partner.avatar_url),
-        cover_url: normalizePortfolioMediaUrl(partner.cover_url),
-        company_logo: normalizePortfolioMediaUrl(partner.company_logo)
-    }));
+    return partnersRes.rows.map(serializePublicPartner);
 }
 
 module.exports = {
@@ -301,5 +388,8 @@ module.exports = {
     fetchProperties,
     fetchPropertyById,
     getS3BaseUrl,
-    normalizePortfolioMediaUrl
+    normalizePortfolioMediaUrl,
+    publicPropertySelect,
+    serializePublicPartner,
+    serializePublicProperty
 };

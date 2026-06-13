@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
+import { getSiteUrl } from "@/lib/site-url";
 
-const FALLBACK_SITE_URL = "https://m-spaces.vercel.app";
 const SITEMAP_PAGE_SIZE = 100;
 
 type SitemapChangeFrequency = NonNullable<MetadataRoute.Sitemap[number]["changeFrequency"]>;
@@ -33,22 +33,6 @@ type PublicDataModule = {
 const { fetchPartners, fetchProperties } = require("../server/public-data") as PublicDataModule;
 
 export const revalidate = 3600;
-
-function getSiteUrl() {
-  const configuredUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.PUBLIC_APP_ORIGIN ??
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ??
-    process.env.VERCEL_URL ??
-    FALLBACK_SITE_URL;
-
-  const normalizedUrl = configuredUrl.startsWith("http")
-    ? configuredUrl
-    : `https://${configuredUrl}`;
-
-  return normalizedUrl.replace(/\/+$/, "");
-}
 
 function toDate(value?: string | Date | null) {
   if (!value) return undefined;

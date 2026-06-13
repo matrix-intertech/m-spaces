@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     title: "Commercial Real Estate in India | MatrixSpaces",
     description:
       "Verified office, retail, warehouse, and investment listings across key Indian cities.",
-    url: "https://matrixspaces.com/commercial-real-estate-india",
+    url: "/commercial-real-estate-india",
     type: "website"
   }
 };

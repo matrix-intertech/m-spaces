@@ -7,7 +7,11 @@ import { getCurrentUser, getDashboardPayload } from "@/services/api";
 import type { User } from "@/types";
 
 export const metadata: Metadata = {
-  title: "Admin Dashboard"
+  title: "Admin Dashboard",
+  robots: {
+    index: false,
+    follow: false
+  }
 };
 
 export default async function AdminDashboardPage({

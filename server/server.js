@@ -162,6 +162,11 @@ function summarizeRuntimeEnvironment() {
         missingRequired,
         missingOptional
     });
+
+    const productionCriticalMissing = ['DATABASE_URL', 'SESSION_SECRET'].filter((key) => !String(process.env[key] || '').trim());
+    if (process.env.NODE_ENV === 'production' && productionCriticalMissing.length > 0) {
+        throw new Error(`Missing critical production environment variables: ${productionCriticalMissing.join(', ')}`);
+    }
 }
 
 function serializeError(error) {
@@ -175,6 +180,7 @@ function serializeError(error) {
 
 function requestMeta(req) {
     return {
+        requestId: req.id,
         method: req.method,
         path: req.originalUrl || req.url,
         contentType: req.get ? req.get('content-type') : req.headers['content-type'],
@@ -407,6 +413,13 @@ app.use((req, res, next) => {
 });
 
 // HTTP request logger (skipping local static files to keep console clean)
+app.use((req, res, next) => {
+    req.id = req.get('x-request-id') || crypto.randomUUID();
+    res.setHeader('x-request-id', req.id);
+    next();
+});
+
+morgan.token('request-id', (req) => req.id || '-');
 app.use(morgan('dev', {
     skip: function (req, res) {
         const url = req.originalUrl.toLowerCase();

@@ -31,20 +31,35 @@ export default function ContactPage() {
           <h2 className="text-xl font-black text-slate-950" style={{ margin: 0 }}>Send Us A Message</h2>
           <form action={`${backendBaseUrl}/contact`} method="POST" style={{ display: "grid", gap: ".75rem" }}>
             <div className="grid gap-3 md:grid-cols-2">
-              <input className="field" placeholder="Full name" name="name" required />
-              <input className="field" placeholder="Email address" name="email" type="email" required />
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Full name
+                <input className="field" placeholder="Full name" name="name" autoComplete="name" required />
+              </label>
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Email address
+                <input className="field" placeholder="Email address" name="email" type="email" autoComplete="email" required />
+              </label>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <input className="field" placeholder="Phone number" name="phone" />
-              <select className="field" name="topic" defaultValue="" required>
-                <option value="" disabled>Select topic</option>
-                <option value="support">Support</option>
-                <option value="listings">Listings</option>
-                <option value="partnership">Partnership</option>
-                <option value="enterprise">Enterprise requirement</option>
-              </select>
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Phone number
+                <input className="field" placeholder="Phone number" name="phone" type="tel" autoComplete="tel" />
+              </label>
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                Topic
+                <select className="field" name="topic" defaultValue="" required>
+                  <option value="" disabled>Select topic</option>
+                  <option value="support">Support</option>
+                  <option value="listings">Listings</option>
+                  <option value="partnership">Partnership</option>
+                  <option value="enterprise">Enterprise requirement</option>
+                </select>
+              </label>
             </div>
-            <textarea className="field" placeholder="Tell us how we can help..." name="message" rows={5} required />
+            <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+              Message
+              <textarea className="field" placeholder="Tell us how we can help..." name="message" rows={5} required />
+            </label>
             <div className="flex flex-wrap gap-2">
               <button type="submit" className="btn btn-primary">Send Message</button>
               <a href="mailto:support@matrixspaces.com" className="btn btn-secondary">Email Instead</a>

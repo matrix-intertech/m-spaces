@@ -12,7 +12,11 @@ import { assetPath, money, parsePhotos, titleCase } from "@/lib/format";
 import type { Property } from "@/types";
 
 export const metadata: Metadata = {
-  title: "Commercial Real Estate Discovery"
+  title: "Commercial Real Estate Discovery",
+  description: "Search verified commercial spaces, offices, retail units, warehouses, coworking spaces, and partner listings on MatrixSpaces.",
+  alternates: {
+    canonical: "/"
+  }
 };
 
 type HomeMode = "for-you" | "discover" | "market-trends";

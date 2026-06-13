@@ -22,6 +22,22 @@ const nextConfig: NextConfig = {
     formats: ["image/avif", "image/webp"],
     unoptimized: false
   },
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=(self), payment=(), usb=(), browsing-topics=()"
+          }
+        ]
+      }
+    ];
+  },
   async rewrites() {
     const internalBridgeRules = [
       { source: "/svc/server/api/properties", destination: "/api/properties" },
