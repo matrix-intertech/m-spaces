@@ -173,6 +173,20 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         return '/';
     }
 
+    function resolveRequestedRedirect(value, fallback = '/') {
+        const raw = String(value || '').trim();
+        if (!raw) return fallback;
+        try {
+            const parsed = new URL(raw, 'http://local.test');
+            const normalized = `${parsed.pathname}${parsed.search || ''}${parsed.hash || ''}`;
+            if (!normalized.startsWith('/')) return fallback;
+            if (normalized.startsWith('//')) return fallback;
+            return normalized;
+        } catch (_) {
+            return fallback;
+        }
+    }
+
     function saveSessionAndRespond(req, res, onSuccess) {
         req.session.save((error) => {
             if (error) {
@@ -981,6 +995,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
         try {
             const loginIdentifier = req.body.email || req.body.username;
             const { password, remember } = req.body;
+            const requestedRedirect = resolveRequestedRedirect(req.body.redirect || req.query.redirect || '', '');
             const result = await pool.query('SELECT * FROM users WHERE email = $1 OR account_number = $1 OR username = $1', [loginIdentifier]);
             console.log('[Auth] login lookup result', {
                 identifier: req.body.email ? sanitizeAuthPayload({ email: req.body.email }).email : sanitizeAuthPayload({ username: loginIdentifier }).username,
@@ -1028,6 +1043,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
                     if (user.is_two_factor_enabled) {
                         req.session.temp_2fa_user_id = user.id;
                         req.session.temp_2fa_remember = !!remember;
+                        req.session.temp_2fa_redirect = requestedRedirect || loginRedirectPath(user);
                         if (wantsJson(req)) {
                             return saveSessionAndRespond(req, res, () => res.json({ requires2FA: true }));
                         }
@@ -1041,7 +1057,7 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
 
                     req.session.user = normalizeStandardProfileUser(user);
                     req.session.cookie.maxAge = remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
-                    const redirectPath = loginRedirectPath(user);
+                    const redirectPath = requestedRedirect || loginRedirectPath(user);
                     logRouteSuccess('login', {
                         userId: user.id,
                         role: user.role,
@@ -1106,10 +1122,12 @@ module.exports = function(uploadKyc, transporter, authLimiter, otpLimiter, whats
             if (verified) {
                 req.session.user = normalizeStandardProfileUser(user);
                 req.session.cookie.maxAge = req.session.temp_2fa_remember ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+                const redirectPath = resolveRequestedRedirect(req.session.temp_2fa_redirect, loginRedirectPath(user));
                 delete req.session.temp_2fa_user_id;
                 delete req.session.temp_2fa_remember;
+                delete req.session.temp_2fa_redirect;
 
-                return saveSessionAndRespond(req, res, () => res.redirect('/'));
+                return saveSessionAndRespond(req, res, () => res.redirect(redirectPath));
             }
 
             return res.render('login-2fa', { error: 'Invalid authentication code or recovery code' });

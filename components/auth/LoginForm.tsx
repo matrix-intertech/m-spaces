@@ -95,6 +95,7 @@ async function postAuth(path: string, body: Record<string, unknown>): Promise<{ 
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const requestedRedirect = searchParams?.get("redirect") ?? "";
   const tabParam = searchParams?.get("tab") ?? "login";
   const refCode = searchParams?.get("ref") ?? "";
   const [authTab, setAuthTab] = useState<AuthTab>(tabParam === "signup" || tabParam === "owner" || tabParam === "tenant" ? "signup" : "login");
@@ -150,7 +151,8 @@ export function LoginForm() {
       const { payload, redirectedTo } = await postAuth("/login", {
         email: formData.get("email"),
         password: formData.get("password"),
-        remember: formData.get("remember") === "on"
+        remember: formData.get("remember") === "on",
+        redirect: requestedRedirect
       });
       if (payload.requires2FA) router.push("/login/2fa");
       else navigateAfterAuth(redirectedTo || payload.redirect || "/");
