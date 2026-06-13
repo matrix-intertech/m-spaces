@@ -40,10 +40,17 @@ export function LocationPickerMap({
         const L = await import("leaflet");
         if (cancelled || !containerRef.current) return;
 
-        L.Icon.Default.mergeOptions({
-          iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-          iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-          shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+        const markerIcon = L.divIcon({
+          className: "ms-location-picker-marker",
+          html: `
+            <span style="position:relative;display:grid;place-items:center;width:26px;height:26px;border-radius:999px;background:linear-gradient(135deg,#fb7185,#b91c1c);border:2px solid rgba(255,255,255,.95);box-shadow:0 10px 24px rgba(185,28,28,.28);">
+              <span style="width:8px;height:8px;border-radius:999px;background:#fff;"></span>
+              <span style="position:absolute;left:50%;bottom:-8px;width:12px;height:12px;background:#dc2626;transform:translateX(-50%) rotate(45deg);border-bottom-right-radius:2px;"></span>
+            </span>
+          `,
+          iconSize: [26, 34],
+          iconAnchor: [13, 30],
+          popupAnchor: [0, -24]
         });
 
         const map = L.map(containerRef.current).setView([defaultLat, defaultLng], 12);
@@ -53,7 +60,7 @@ export function LocationPickerMap({
           subdomains: streetMapTiles.subdomains
         }).addTo(map);
 
-        const marker = L.marker([defaultLat, defaultLng], { draggable: true }).addTo(map);
+        const marker = L.marker([defaultLat, defaultLng], { draggable: true, icon: markerIcon }).addTo(map);
         mapRef.current = map;
         markerRef.current = marker;
 
