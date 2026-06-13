@@ -15,6 +15,8 @@ export function ListPropertyForm({ user }: { user: User }) {
   const [propertyType, setPropertyType] = useState("Office");
   const [isOwnerProperty, setIsOwnerProperty] = useState(!canChooseOwnership);
   const [locality, setLocality] = useState("");
+  const [localityLat, setLocalityLat] = useState("");
+  const [localityLng, setLocalityLng] = useState("");
   const [localitySuggestions, setLocalitySuggestions] = useState<PlaceSuggestion[]>([]);
   const [localityOpen, setLocalityOpen] = useState(false);
   const [localityLoading, setLocalityLoading] = useState(false);
@@ -109,10 +111,15 @@ export function ListPropertyForm({ user }: { user: User }) {
               className="field"
               name="locality"
               value={locality}
-              onChange={(event) => setLocality(event.target.value)}
+              onChange={(event) => {
+                setLocality(event.target.value);
+                setLocalityLat("");
+                setLocalityLng("");
+              }}
               onFocus={() => setLocalityOpen(true)}
               onBlur={() => window.setTimeout(() => setLocalityOpen(false), 140)}
-              placeholder="Search city, sector, landmark..."
+              placeholder="Search and select locality, sector, landmark..."
+              autoComplete="off"
               required
             />
             {localityOpen ? (
@@ -142,6 +149,8 @@ export function ListPropertyForm({ user }: { user: User }) {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => {
                         setLocality(place.display_name);
+                        setLocalityLat(place.lat);
+                        setLocalityLng(place.lon);
                         setLocalityOpen(false);
                       }}
                       style={{
@@ -170,6 +179,13 @@ export function ListPropertyForm({ user }: { user: User }) {
                     Start typing to search places.
                   </div>
                 )}
+              </div>
+            ) : null}
+            <input type="hidden" name="locality_latitude" value={localityLat} />
+            <input type="hidden" name="locality_longitude" value={localityLng} />
+            {localityLat && localityLng ? (
+              <div style={{ marginTop: ".38rem", color: "var(--ms-muted)", fontSize: ".78rem", fontWeight: 700 }}>
+                Selected place pinned for map and search.
               </div>
             ) : null}
           </div>
