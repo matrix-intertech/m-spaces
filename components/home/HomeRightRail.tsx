@@ -45,7 +45,7 @@ export function HomeRightRail({
             height: "100%"
           }}
         >
-          <PropertyMapIsland properties={properties} height={360} showSearchControl />
+          <PropertyMapIsland properties={properties} height={360} showSearchControl loadStrategy="idle" />
         </div>
       </section>
     </div>

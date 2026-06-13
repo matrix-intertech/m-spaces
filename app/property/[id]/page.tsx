@@ -403,7 +403,7 @@ export default async function PropertyDetailsPage({ params }: { params: Promise<
 
         <section id="location" className="grid gap-4">
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <PropertyMapIsland properties={[property]} showNearbyPlaces />
+            <PropertyMapIsland properties={[property]} showNearbyPlaces loadStrategy="visible" />
           </div>
         </section>
       </div>
