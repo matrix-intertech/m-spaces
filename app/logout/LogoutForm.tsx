@@ -15,11 +15,11 @@ export default function LogoutForm() {
         style={{ display: "grid", gap: ".75rem" }}
       >
         <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: "100%" }}>
-          {submitting ? "Logging out..." : "Yes, log me out"}
+          {submitting ? "Signing you out..." : "Yes, sign me out"}
         </button>
       </form>
       <Link className="btn btn-secondary" href="/" style={{ width: "100%" }}>
-        Cancel and stay signed in
+        Stay signed in
       </Link>
     </div>
   );

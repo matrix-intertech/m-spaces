@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LocationPickerMap } from "@/components/map/LocationPickerMap";
 import { backendBaseUrl } from "@/lib/config";
+import type { PlaceSuggestion } from "@/services/places";
 import type { User } from "@/types";
 
 const managedRoles = new Set(["admin", "support", "builder", "broker", "agent", "external_sales"]);
@@ -13,6 +14,10 @@ export function ListPropertyForm({ user }: { user: User }) {
   const [listingType, setListingType] = useState("rent");
   const [propertyType, setPropertyType] = useState("Office");
   const [isOwnerProperty, setIsOwnerProperty] = useState(!canChooseOwnership);
+  const [locality, setLocality] = useState("");
+  const [localitySuggestions, setLocalitySuggestions] = useState<PlaceSuggestion[]>([]);
+  const [localityOpen, setLocalityOpen] = useState(false);
+  const [localityLoading, setLocalityLoading] = useState(false);
 
   const ownerName = String(user.name || user.username || "");
   const ownerPhone = String(user.phone || "");
@@ -23,6 +28,27 @@ export function ListPropertyForm({ user }: { user: User }) {
         ? "associated sales agent"
         : "independent sales agent"
       : role.replace(/_/g, " ");
+
+  useEffect(() => {
+    const query = locality.trim();
+    if (query.length < 2) {
+      setLocalitySuggestions([]);
+      setLocalityLoading(false);
+      return;
+    }
+
+    setLocalityLoading(true);
+    const timer = window.setTimeout(async () => {
+      const response = await fetch(`/api/places/search?q=${encodeURIComponent(query)}`)
+        .then((res) => res.json())
+        .catch(() => ({ places: [] }));
+      setLocalitySuggestions((response.places ?? []) as PlaceSuggestion[]);
+      setLocalityLoading(false);
+      setLocalityOpen(true);
+    }, 280);
+
+    return () => window.clearTimeout(timer);
+  }, [locality]);
 
   return (
     <form
@@ -78,7 +104,75 @@ export function ListPropertyForm({ user }: { user: User }) {
         </label>
         <label>
           <span style={{ display: "block", marginBottom: ".3rem", fontWeight: 700 }}>Locality</span>
-          <input className="field" name="locality" required />
+          <div style={{ position: "relative" }}>
+            <input
+              className="field"
+              name="locality"
+              value={locality}
+              onChange={(event) => setLocality(event.target.value)}
+              onFocus={() => setLocalityOpen(true)}
+              onBlur={() => window.setTimeout(() => setLocalityOpen(false), 140)}
+              placeholder="Search city, sector, landmark..."
+              required
+            />
+            {localityOpen ? (
+              <div
+                className="surface"
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  left: 0,
+                  right: 0,
+                  zIndex: 20,
+                  borderRadius: 14,
+                  padding: ".25rem",
+                  maxHeight: 220,
+                  overflowY: "auto"
+                }}
+              >
+                {localityLoading ? (
+                  <div style={{ padding: ".55rem .6rem", color: "var(--ms-muted)", fontSize: ".82rem", fontWeight: 700 }}>
+                    Searching localities...
+                  </div>
+                ) : localitySuggestions.length ? (
+                  localitySuggestions.map((place) => (
+                    <button
+                      key={`${place.lat}-${place.lon}-${place.display_name}`}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setLocality(place.display_name);
+                        setLocalityOpen(false);
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        border: 0,
+                        background: "transparent",
+                        textAlign: "left",
+                        borderRadius: 10,
+                        padding: ".52rem .56rem",
+                        cursor: "pointer"
+                      }}
+                    >
+                      <strong style={{ display: "block", fontSize: ".85rem", color: "var(--ms-ink)" }}>
+                        {place.display_name.split(",").slice(0, 2).join(",")}
+                      </strong>
+                      <span style={{ color: "var(--ms-muted)", fontSize: ".74rem" }}>{place.display_name}</span>
+                    </button>
+                  ))
+                ) : locality.trim().length >= 2 ? (
+                  <div style={{ padding: ".55rem .6rem", color: "var(--ms-muted)", fontSize: ".82rem", fontWeight: 700 }}>
+                    No matching localities found.
+                  </div>
+                ) : (
+                  <div style={{ padding: ".55rem .6rem", color: "var(--ms-muted)", fontSize: ".82rem", fontWeight: 700 }}>
+                    Start typing to search places.
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
         </label>
         <label>
           <span style={{ display: "block", marginBottom: ".3rem", fontWeight: 700 }}>Property type</span>
