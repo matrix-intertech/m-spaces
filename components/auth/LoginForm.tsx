@@ -55,51 +55,6 @@ function navigateAfterAuth(url: string) {
   window.location.assign(url || "/");
 }
 
-function roleRedirectPath(roleValue: unknown) {
-  const role = String(roleValue || "").toLowerCase();
-  if (role === "admin" || role === "support") return "/admin?tab=overview";
-  if (role === "builder") return "/builder";
-  if (role === "broker") return "/broker";
-  if (role === "dealer") return "/dealer";
-  if (role === "agent") return "/agent";
-  if (role === "external_sales") return "/sales";
-  if (role === "corporate" || role === "corporate_user") return "/corporate";
-  return "/";
-}
-
-async function fetchCurrentUserClient(): Promise<{ role?: string } | null> {
-  const response = await fetch(`${backendBaseUrl}/api/user`, {
-    credentials: "include",
-    headers: {
-      Accept: "application/json"
-    },
-    cache: "no-store"
-  });
-
-  if (!response.ok) return null;
-
-  const payload = (await response.json().catch(() => null)) as
-    | { data?: { role?: string } | null; user?: { role?: string } | null; role?: string }
-    | null;
-
-  return payload?.data ?? payload?.user ?? (payload?.role ? { role: payload.role } : null);
-}
-
-async function waitForAuthenticatedSession(preferredRedirect: string, fallbackRedirect: string) {
-  const attempts = [150, 300, 450, 700, 1000];
-
-  for (const delayMs of attempts) {
-    const user = await fetchCurrentUserClient().catch(() => null);
-    if (user) {
-      return preferredRedirect || fallbackRedirect || roleRedirectPath(user.role);
-    }
-
-    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-  }
-
-  return preferredRedirect || fallbackRedirect || "/";
-}
-
 async function postAuth(path: string, body: Record<string, unknown>): Promise<{ payload: AuthPayload; redirectedTo?: string }> {
   const csrfToken = await getClientCsrfToken();
   const response = await fetch(`${backendBaseUrl}${path}`, {
@@ -179,22 +134,6 @@ export function LoginForm() {
     return () => window.clearTimeout(timer);
   }, [whatsappResendSeconds]);
 
-  useEffect(() => {
-    if (!requestedRedirect) return;
-
-    let active = true;
-    void fetchCurrentUserClient()
-      .then((user) => {
-        if (!active || !user) return;
-        navigateAfterAuth(requestedRedirect || roleRedirectPath(user.role));
-      })
-      .catch(() => {});
-
-    return () => {
-      active = false;
-    };
-  }, [requestedRedirect]);
-
   function showLoginMode(mode: LoginMode) {
     setAuthTab("login");
     setLoginMode(mode);
@@ -216,13 +155,7 @@ export function LoginForm() {
         redirect: requestedRedirect
       });
       if (payload.requires2FA) router.push("/login/2fa");
-      else {
-        const nextUrl = await waitForAuthenticatedSession(
-          requestedRedirect,
-          redirectedTo || payload.redirect || "/"
-        );
-        navigateAfterAuth(nextUrl);
-      }
+      else navigateAfterAuth(redirectedTo || payload.redirect || requestedRedirect || "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

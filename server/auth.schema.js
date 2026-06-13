@@ -6,6 +6,7 @@ const loginSchema = z.object({
     username: z.string().optional(),
     password: z.string().min(1, { message: "Password is required." }),
     remember: z.any().optional(), // 'remember' can be 'on' or undefined
+    redirect: z.string().optional(),
 }).superRefine((data, ctx) => {
     const identifier = data.email || data.username;
     if (!identifier || identifier.trim() === '') {
