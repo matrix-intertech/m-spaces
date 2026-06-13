@@ -102,7 +102,7 @@ export function SearchResultsExperience({
   recommendedProperties?: Property[];
   recentlyViewedProperties?: Property[];
 }) {
-  const [viewMode, setViewMode] = useState<"split" | "list" | "map">("split");
+  const [viewMode, setViewMode] = useState<"split" | "map">("split");
   const [isWideDesktop, setIsWideDesktop] = useState(false);
 
   useEffect(() => {
@@ -204,10 +204,6 @@ export function SearchResultsExperience({
           </div>
 
           <div className="flex flex-wrap gap-2 lg:justify-end">
-            <button type="button" onClick={() => setViewMode("list")} className={`btn rounded-full px-4 ${viewMode === "list" ? "btn-primary" : "btn-secondary"}`}>
-              <List className="h-4 w-4" aria-hidden />
-              List View
-            </button>
             <button type="button" onClick={() => setViewMode("split")} className={`btn rounded-full px-4 ${viewMode === "split" ? "btn-primary" : "btn-secondary"}`}>
               <MapPinned className="h-4 w-4" aria-hidden />
               Split View
@@ -256,7 +252,7 @@ export function SearchResultsExperience({
       ) : (
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid gap-4">
-            {showList ? <PropertyGrid properties={properties} variant={viewMode === "list" ? "list" : "grid"} /> : null}
+            {showList ? <PropertyGrid properties={properties} variant="grid" /> : null}
 
             {pagination ? (
               <div className="surface flex flex-wrap items-center justify-between gap-3 rounded-[26px] border border-white/75 px-5 py-4">
