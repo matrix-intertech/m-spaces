@@ -44,11 +44,31 @@ function safeText(value: unknown, fallback = "") {
   return text || fallback;
 }
 
-function createPropertyPopupNode(property: Property, photo: string) {
+function createDirectionsUrl(lat: number, lng: number) {
+  const destination = `${lat},${lng}`;
+  const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isWindows = /Windows/i.test(userAgent);
+  const isIOS = /iPhone|iPad|iPod/i.test(userAgent);
+  const isAndroid = /Android/i.test(userAgent);
+
+  if (isWindows || isAndroid) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+  }
+
+  if (isIOS) {
+    return `https://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`;
+  }
+
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+}
+
+function createPropertyPopupNode(property: Property, photo: string, lat: number, lng: number) {
+  const wrapper = document.createElement("div");
+  wrapper.style.minWidth = "210px";
+
   const anchor = document.createElement("a");
   anchor.href = `/property/${property.id}`;
   anchor.style.display = "block";
-  anchor.style.minWidth = "210px";
   anchor.style.color = "#0f172a";
   anchor.style.textDecoration = "none";
 
@@ -73,7 +93,29 @@ function createPropertyPopupNode(property: Property, photo: string) {
   locality.textContent = safeText(property.locality);
   anchor.appendChild(locality);
 
-  return anchor;
+  wrapper.appendChild(anchor);
+
+  const directionsLink = document.createElement("a");
+  directionsLink.href = createDirectionsUrl(lat, lng);
+  directionsLink.target = "_blank";
+  directionsLink.rel = "noopener noreferrer";
+  directionsLink.textContent = "Get directions";
+  directionsLink.style.display = "inline-flex";
+  directionsLink.style.alignItems = "center";
+  directionsLink.style.justifyContent = "center";
+  directionsLink.style.width = "100%";
+  directionsLink.style.marginTop = "10px";
+  directionsLink.style.padding = "10px 12px";
+  directionsLink.style.borderRadius = "10px";
+  directionsLink.style.background = "linear-gradient(135deg,#fb7185 0%,#be123c 100%)";
+  directionsLink.style.color = "#fff";
+  directionsLink.style.fontSize = "13px";
+  directionsLink.style.fontWeight = "800";
+  directionsLink.style.textDecoration = "none";
+  directionsLink.style.boxShadow = "0 10px 24px -16px rgba(190,18,60,.9)";
+  wrapper.appendChild(directionsLink);
+
+  return wrapper;
 }
 
 function createNearbyPlacePopupNode(place: NearbyPlace) {
@@ -543,7 +585,7 @@ export function PropertyMap({
 
         const photo = assetPath(parsePhotos(property.photos, property.image_url || property.photo)[0]);
         const marker = L.marker([lat, lng], { icon })
-          .bindPopup(createPropertyPopupNode(property, photo))
+          .bindPopup(createPropertyPopupNode(property, photo, lat, lng))
           .addTo(clusterLayer);
         markersRef.current.push(marker);
         bounds.push([lat, lng]);
