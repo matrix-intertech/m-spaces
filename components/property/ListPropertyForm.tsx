@@ -189,10 +189,14 @@ export function ListPropertyForm({ user }: { user: User }) {
             <option value="Others">Others</option>
           </select>
         </label>
-        <label>
-          <span style={{ display: "block", marginBottom: ".3rem", fontWeight: 700 }}>Other property type</span>
-          <input className="field" name="typeOther" placeholder="Only needed if Property type = Others" disabled={propertyType !== "Others"} required={propertyType === "Others"} />
-        </label>
+        {propertyType === "Others" ? (
+          <label>
+            <span style={{ display: "block", marginBottom: ".3rem", fontWeight: 700 }}>Other property type</span>
+            <input className="field" name="typeOther" placeholder="Enter custom property type" required />
+          </label>
+        ) : (
+          <input type="hidden" name="typeOther" value="" />
+        )}
         <label>
           <span style={{ display: "block", marginBottom: ".3rem", fontWeight: 700 }}>Listing type</span>
           <select className="field" name="listingType" value={listingType} onChange={(event) => setListingType(event.target.value)}>
